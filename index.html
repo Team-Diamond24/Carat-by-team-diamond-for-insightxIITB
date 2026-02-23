@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carat by Diamond | Transaction Intelligence</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        bg: '#eef1ff',
+                        surface: '#d2daff',
+                        'accent-secondary': '#aac4ff',
+                        accent: '#b1b2ff',
+                        'text-primary': '#1a1b41',
+                        'text-secondary': '#3730a3',
+                        'text-muted': '#6366f1',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #eef1ff;
+            color: #1a1b41;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+        @keyframes ticker {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+        .ticker-container {
+            width: 100%;
+            overflow: hidden;
+            background-color: #d2daff;
+            border-top: 2px solid #b1b2ff;
+            border-bottom: 2px solid #b1b2ff;
+            padding: 1rem 0;
+        }
+        .ticker-track {
+            display: flex;
+            white-space: nowrap;
+            animation: ticker 30s linear infinite;
+        }
+        .ticker-item {
+            font-family: 'JetBrains Mono', monospace;
+            color: #1a1b41;
+            font-weight: 800;
+            padding-right: 2rem;
+        }
+        .diamond-icon {
+            width: 18px;
+            height: 18px;
+            background-color: #b1b2ff;
+            transform: rotate(45deg);
+        }
+        .sharp-corners { border-radius: 0px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <nav class="w-full h-20 flex items-center justify-between px-12 border-b border-surface fixed top-0 bg-bg/90 backdrop-blur-md z-50">
+        <div class="flex items-center gap-4">
+            <div class="diamond-icon"></div>
+            <span class="text-text-primary font-mono font-bold text-xl tracking-tight uppercase">Carat</span>
+        </div>
+        <div>
+            <a href="/dashboard">
+                <button class="sharp-corners border-2 border-accent text-text-primary font-mono font-bold px-6 py-3 hover:bg-surface transition-colors uppercase text-sm tracking-wider">
+                    Open Dashboard
+                </button>
+            </a>
+        </div>
+    </nav>
+
+    <section class="pt-32 pb-20 px-12 flex flex-col items-center justify-center min-h-[85vh] text-center relative">
+        <h1 class="text-text-primary font-black text-8xl leading-none mb-6 tracking-tight">
+            CARAT BY TEAM DIAMOND
+        </h1>
+        <h2 class="text-text-primary font-bold text-4xl mb-8">
+            Transaction intelligence. Plain English.
+        </h2>
+        <p class="text-text-secondary text-xl max-w-3xl mb-12 leading-relaxed font-medium">
+            Ask any question about 250,000 UPI transactions. Get analyst-grade insights in seconds. No code. No SQL. Just answers.
+        </p>
+        
+        <a href="/dashboard">
+            <button id="launch-btn" class="sharp-corners bg-accent text-text-primary font-bold font-mono px-10 py-5 text-lg hover:bg-accent-secondary transition-colors uppercase tracking-wider mb-20 shadow-[4px_4px_0px_0px_rgba(26,27,65,1)] border-2 border-text-primary">
+                Launch Carat
+            </button>
+        </a>
+
+        <div class="ticker-container absolute bottom-0 left-0">
+            <div class="ticker-track" id="ticker-track">
+                <span class="ticker-item">RECHARGE FAILURE RATE: 8.5%</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">PEAK HOUR: 14:00</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">TOP STATE: MAHARASHTRA</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">P2P VOLUME: 112,445</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">YES BANK FLAG RATE: 7.8%</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">AVG TRANSACTION: RS 1,311</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">WEEKEND SURGE: +18%</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">RECHARGE FAILURE RATE: 8.5%</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">PEAK HOUR: 14:00</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">TOP STATE: MAHARASHTRA</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">P2P VOLUME: 112,445</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">YES BANK FLAG RATE: 7.8%</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">AVG TRANSACTION: RS 1,311</span>
+                <span class="ticker-item">//</span>
+                <span class="ticker-item">WEEKEND SURGE: +18%</span>
+                <span class="ticker-item">//</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-24 px-12 bg-bg border-b border-surface">
+        <div class="max-w-7xl mx-auto">
+            <h3 class="text-text-primary text-sm font-bold uppercase tracking-widest mb-12">CAPABILITIES</h3>
+            <div class="grid grid-cols-3 gap-8">
+                <div class="bg-surface p-8 border-l-4 border-accent sharp-corners shadow-sm">
+                    <h4 class="text-text-primary font-bold text-xl mb-4">Instant Analysis</h4>
+                    <p class="text-text-secondary font-medium leading-relaxed">
+                        Ask about failure rates, transaction patterns, and user behavior across the entire dataset.
+                    </p>
+                </div>
+                <div class="bg-surface p-8 border-l-4 border-accent sharp-corners shadow-sm">
+                    <h4 class="text-text-primary font-bold text-xl mb-4">Visual Insights</h4>
+                    <p class="text-text-secondary font-medium leading-relaxed">
+                        Every answer comes with auto-generated charts and data breakdowns for immediate clarity.
+                    </p>
+                </div>
+                <div class="bg-surface p-8 border-l-4 border-accent sharp-corners shadow-sm">
+                    <h4 class="text-text-primary font-bold text-xl mb-4">Natural Language</h4>
+                    <p class="text-text-secondary font-medium leading-relaxed">
+                        No technical knowledge needed. Ask exactly like you would a colleague in plain English.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-24 px-12 bg-bg">
+        <div class="max-w-4xl mx-auto">
+            <h3 class="text-text-primary text-sm font-bold uppercase tracking-widest mb-12 text-center">SEE IT IN ACTION</h3>
+            <div class="bg-surface border-2 border-accent p-8 sharp-corners font-mono shadow-[8px_8px_0px_0px_rgba(177,178,255,1)]">
+                <div class="flex gap-4 text-lg mb-8 text-text-primary font-bold">
+                    <span class="text-accent">></span>
+                    <span>which bank has the highest failure rate?</span>
+                </div>
+                <div class="bg-bg border-l-4 border-accent p-6 sharp-corners">
+                    <div class="text-text-primary font-black text-2xl mb-6 font-sans">Yes Bank — 7.8% failure rate</div>
+                    <div class="flex flex-col gap-5 font-mono text-sm text-text-secondary font-bold">
+                        <div class="flex items-center gap-4">
+                            <span class="w-24 text-right">YES BANK</span>
+                            <div class="h-6 bg-accent w-[78%]"></div>
+                            <span class="text-text-primary">7.8%</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="w-24 text-right">SBI</span>
+                            <div class="h-6 bg-accent-secondary w-[45%]"></div>
+                            <span>4.5%</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="w-24 text-right">HDFC</span>
+                            <div class="h-6 bg-accent-secondary opacity-70 w-[32%]"></div>
+                            <span>3.2%</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="w-24 text-right">ICICI</span>
+                            <div class="h-6 bg-accent-secondary opacity-50 w-[29%]"></div>
+                            <span>2.9%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="py-12 px-12 border-t border-surface bg-bg text-text-muted">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="diamond-icon scale-75"></div>
+                <span class="font-mono font-bold tracking-tight text-text-primary">CARAT</span>
+            </div>
+            <div class="text-sm uppercase tracking-wider font-bold">
+                Built for Techfest IIT Bombay x NPCI
+            </div>
+            <div class="text-sm font-bold">Team Diamond</div>
+        </div>
+    </footer>
+
+    <script>
+        // Load real stats into ticker
+        async function loadTicker() {
+            try {
+                const res = await fetch("/stats");
+                const data = await res.json();
+                const track = document.getElementById("ticker-track");
+                const items = [
+                    "TOTAL TRANSACTIONS: " + data.total_transactions,
+                    "SUCCESS RATE: " + data.success_rate,
+                    "AVG TRANSACTION: " + data.avg_amount,
+                    "PEAK HOUR: " + data.peak_hour,
+                    "TOP STATE: " + data.top_state.toUpperCase(),
+                    "FAILURE RATE: " + data.failure_rate
+                ];
+                const separator = " // ";
+                const content = items.join(separator) + separator;
+                track.innerHTML = "";
+                for (let i = 0; i < 3; i++) {
+                    const span = document.createElement("span");
+                    span.className = "ticker-item";
+                    span.textContent = content;
+                    track.appendChild(span);
+                }
+            } catch (e) {
+                console.log("Could not load live stats for ticker");
+            }
+        }
+        loadTicker();
+    </script>
+</body>
+</html>

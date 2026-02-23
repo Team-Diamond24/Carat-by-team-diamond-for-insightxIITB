@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carat by Diamond | Analyst Terminal</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        bg: '#eef1ff',
+                        surface: '#d2daff',
+                        'accent-secondary': '#aac4ff',
+                        accent: '#b1b2ff',
+                        'text-primary': '#1a1b41',
+                        'text-secondary': '#3730a3',
+                        'text-muted': '#6366f1',
+                        success: '#10b981',
+                        danger: '#ef4444'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    fontSize: { 'xxs': '0.65rem' },
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #eef1ff;
+            color: #1a1b41;
+            font-family: 'Inter', sans-serif;
+            scrollbar-width: thin;
+            scrollbar-color: #b1b2ff #eef1ff;
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #eef1ff; }
+        ::-webkit-scrollbar-thumb { background-color: #b1b2ff; }
+        .sharp-corners { border-radius: 0px !important; }
+        .diamond-icon {
+            width: 14px;
+            height: 14px;
+            background-color: #b1b2ff;
+            transform: rotate(45deg);
+        }
+        @keyframes pulse-dot {
+            0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+        }
+        .status-pulse { animation: pulse-dot 2s infinite; }
+        .query-chip:hover { background-color: #d2daff; border-color: #b1b2ff; }
+
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fadeSlideIn 0.35s ease-out forwards; }
+
+        @keyframes typingPulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        .typing-dot {
+            display: inline-block;
+            width: 6px; height: 6px;
+            background: #3730a3;
+            border-radius: 50%;
+            animation: typingPulse 1.2s infinite;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex">
+
+    <!-- SIDEBAR -->
+    <aside class="w-[260px] flex-shrink-0 bg-surface border-r-2 border-accent flex flex-col h-full z-10">
+        <div class="p-6 border-b-2 border-accent">
+            <a href="/" class="flex items-center gap-3 mb-1 hover:opacity-80 transition-opacity">
+                <div class="diamond-icon"></div>
+                <span class="text-text-primary font-mono font-bold text-xl tracking-tight uppercase">Carat</span>
+            </a>
+            <div class="text-text-muted text-xs font-medium pl-6 tracking-wide">by Team Diamond</div>
+        </div>
+
+        <nav class="flex flex-col border-b-2 border-accent py-2">
+            <a href="#" class="px-6 py-3 border-l-4 border-accent bg-bg/60 text-text-primary font-bold text-sm tracking-wide">Dashboard</a>
+            <a href="#" class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Insights</a>
+            <a href="#" class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Reports</a>
+        </nav>
+
+        <div class="p-6 flex-1 overflow-y-auto">
+            <h3 class="text-xs font-bold text-text-secondary uppercase tracking-widest mb-4">Quick Queries</h3>
+            <div class="flex flex-col gap-3" id="quick-queries">
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which bank fails most?">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">which bank fails most?</span>
+                </div>
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="what are peak transaction hours?">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">peak transaction hours?</span>
+                </div>
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="show fraud flag patterns">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">fraud flag patterns?</span>
+                </div>
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which states send the most transactions?">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">top performing states?</span>
+                </div>
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="compare weekend vs weekday transaction trends">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">weekend vs weekday trends?</span>
+                </div>
+                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which age group does the most P2P transfers?">
+                    <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
+                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">age group breakdown?</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="h-12 border-t-2 border-accent bg-surface flex items-center px-4 gap-3 shrink-0">
+            <div class="w-2 h-2 bg-success rounded-full status-pulse"></div>
+            <span class="text-xxs font-mono text-text-muted font-bold tracking-wide uppercase">250,000 transactions loaded</span>
+        </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="flex-1 flex flex-col min-w-0 bg-bg relative">
+        
+        <header class="h-14 bg-surface border-b-2 border-accent flex items-center justify-between px-6 shrink-0 z-10">
+            <h1 class="text-xs font-bold text-text-primary uppercase tracking-widest">Analysis Terminal</h1>
+            <div class="flex items-center gap-2 border-2 border-accent bg-bg px-3 py-1">
+                <div class="w-1.5 h-1.5 bg-success rounded-full status-pulse"></div>
+                <span class="text-xs font-bold text-success uppercase tracking-widest">Live</span>
+            </div>
+        </header>
+
+        <!-- KPI STRIP -->
+        <div class="bg-surface/50 border-b-2 border-accent p-6 shrink-0">
+            <div class="grid grid-cols-3 gap-6">
+                <div class="bg-bg border-l-4 border-accent p-4 shadow-sm flex flex-col justify-between h-24">
+                    <span class="text-xxs font-bold text-text-muted uppercase tracking-widest">Transactions</span>
+                    <div class="flex items-end justify-between">
+                        <span id="stat-total" class="font-mono text-3xl font-bold text-text-primary">...</span>
+                    </div>
+                </div>
+                <div class="bg-bg border-l-4 border-accent p-4 shadow-sm flex flex-col justify-between h-24">
+                    <span class="text-xxs font-bold text-text-muted uppercase tracking-widest">Success Rate</span>
+                    <div class="flex items-end justify-between">
+                        <span id="stat-success" class="font-mono text-3xl font-bold text-text-primary">...</span>
+                    </div>
+                </div>
+                <div class="bg-bg border-l-4 border-accent p-4 shadow-sm flex flex-col justify-between h-24">
+                    <span class="text-xxs font-bold text-text-muted uppercase tracking-widest">Avg Amount</span>
+                    <div class="flex items-end justify-between">
+                        <span id="stat-avg" class="font-mono text-3xl font-bold text-text-primary">...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FEED -->
+        <div id="messages-container" class="flex-1 overflow-y-auto p-8 flex flex-col gap-8 pb-36"></div>
+
+        <!-- INPUT BAR -->
+        <div class="absolute bottom-0 w-full bg-surface border-t-2 border-accent p-6 shadow-lg">
+            <div class="flex items-center bg-bg border-2 border-accent p-1 focus-within:border-text-primary transition-colors">
+                <span class="text-text-muted font-mono font-bold px-4">></span>
+                <input
+                    type="text"
+                    id="chat-input"
+                    placeholder="enter query..."
+                    class="flex-1 bg-transparent outline-none font-mono text-text-primary font-bold placeholder:text-text-secondary/50"
+                    autocomplete="off"
+                    onkeydown="if(event.key==='Enter') sendMessage()"
+                >
+                <button
+                    id="send-btn"
+                    onclick="sendMessage()"
+                    class="bg-accent hover:bg-text-primary hover:text-bg text-text-primary font-mono font-bold px-8 py-3 uppercase tracking-wider transition-colors sharp-corners"
+                >
+                    Execute
+                </button>
+            </div>
+            <div class="flex items-center gap-4 mt-4 px-2">
+                <span class="text-xxs font-bold text-text-muted uppercase tracking-widest">Suggested:</span>
+                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="show anomaly patterns in fraud flags">> anomaly detection</span>
+                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="which merchant categories have highest transaction volume">> top merchants by volume</span>
+                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="which states have the highest failure rates">> regional risk breakdown</span>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let chatHistory = [];
+        let chartCounter = 0;
+
+        // Load real KPI stats
+        async function loadStats() {
+            try {
+                const res = await fetch("/stats");
+                const data = await res.json();
+                document.getElementById("stat-total").textContent = data.total_transactions;
+                document.getElementById("stat-success").textContent = data.success_rate;
+                document.getElementById("stat-avg").textContent = data.avg_amount;
+            } catch (e) {
+                document.getElementById("stat-total").textContent = "250,000";
+                document.getElementById("stat-success").textContent = "95.1%";
+                document.getElementById("stat-avg").textContent = "Rs 1,311";
+            }
+        }
+
+        // Add user query line
+        function addUserQuery(text) {
+            const container = document.getElementById("messages-container");
+            const div = document.createElement("div");
+            div.className = "font-mono text-text-secondary font-bold text-sm fade-in";
+            div.textContent = "> " + text;
+            container.appendChild(div);
+            scrollToBottom();
+        }
+
+        // Add typing indicator
+        function addTypingIndicator() {
+            const container = document.getElementById("messages-container");
+            const div = document.createElement("div");
+            div.id = "typing-indicator";
+            div.className = "bg-surface border-t-4 border-accent p-5 sharp-corners border-x-2 border-b-2 fade-in";
+            div.innerHTML = '<div class="flex gap-2 items-center"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span class="text-xs font-mono text-text-muted ml-2">Analysing...</span></div>';
+            container.appendChild(div);
+            scrollToBottom();
+        }
+
+        function removeTypingIndicator() {
+            const el = document.getElementById("typing-indicator");
+            if (el) el.remove();
+        }
+
+        // Build and add response card
+        function addResponseCard(data) {
+            const container = document.getElementById("messages-container");
+            const chartId = "chart-" + (chartCounter++);
+
+            const statsHTML = (data.stats || []).map(s =>
+                `<div class="border-2 border-accent bg-bg px-4 py-2 text-sm font-mono font-bold text-text-primary sharp-corners">
+                    <span class="text-text-muted mr-2">${s.label}:</span>${s.value}
+                </div>`
+            ).join("");
+
+            const followupsHTML = (data.followups || []).map(q =>
+                `<button class="example-question query-chip border-2 border-accent/50 bg-bg px-3 py-1.5 text-xs font-mono font-bold text-text-secondary transition-colors sharp-corners" data-q="${q}">
+                    > ${q}
+                </button>`
+            ).join("");
+
+            const chartHTML = data.chart
+                ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:260px;"></div>`
+                : "";
+
+            const now = new Date();
+            const timestamp = "T+" + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":" + String(now.getSeconds()).padStart(2,"0");
+
+            const card = document.createElement("div");
+            card.className = "w-full flex flex-col gap-3 fade-in";
+            card.innerHTML = `
+                <div class="bg-surface border-t-4 border-accent p-6 shadow-[6px_6px_0px_0px_rgba(177,178,255,1)] flex flex-col sharp-corners border-x-2 border-b-2">
+                    <div class="flex justify-between items-start mb-2">
+                        <h2 class="text-xl font-black text-text-primary uppercase tracking-tight">${data.headline || "ANALYSIS COMPLETE"}</h2>
+                        <span class="text-xs font-mono text-text-muted font-bold">${timestamp}</span>
+                    </div>
+                    <div class="text-text-secondary font-medium text-base mb-4 pb-4 border-b-2 border-accent/30">
+                        ${data.answer}
+                    </div>
+                    ${chartHTML}
+                    ${statsHTML ? `<div class="flex flex-wrap gap-4 mb-4 mt-2">${statsHTML}</div>` : ""}
+                    ${followupsHTML ? `
+                    <div class="pt-4 border-t-2 border-accent/40">
+                        <span class="text-xxs font-bold text-text-muted uppercase tracking-widest block mb-3">Explore Further</span>
+                        <div class="flex flex-wrap gap-3">${followupsHTML}</div>
+                    </div>` : ""}
+                </div>
+            `;
+
+            container.appendChild(card);
+
+            // Render Plotly chart
+            if (data.chart) {
+                setTimeout(() => {
+                    try {
+                        Plotly.newPlot(
+                            chartId,
+                            data.chart.data,
+                            {
+                                ...data.chart.layout,
+                                paper_bgcolor: "rgba(0,0,0,0)",
+                                plot_bgcolor: "rgba(0,0,0,0)",
+                                font: { color: "#3730a3", family: "JetBrains Mono" },
+                                margin: { t: 20, r: 20, b: 40, l: 120 }
+                            },
+                            { responsive: true, displayModeBar: false }
+                        );
+                    } catch (e) {
+                        console.log("Chart render error", e);
+                    }
+                }, 100);
+            }
+
+            // Wire up follow-up buttons in this card
+            card.querySelectorAll(".example-question").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const q = btn.getAttribute("data-q");
+                    if (q) submitQuery(q);
+                });
+            });
+
+            scrollToBottom();
+        }
+
+        async function submitQuery(question) {
+            if (!question.trim()) return;
+
+            const input = document.getElementById("chat-input");
+            input.value = "";
+            input.disabled = true;
+            document.getElementById("send-btn").disabled = true;
+
+            addUserQuery(question);
+            addTypingIndicator();
+
+            try {
+                const res = await fetch("/ask", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question, history: chatHistory })
+                });
+                const data = await res.json();
+                removeTypingIndicator();
+                addResponseCard(data);
+
+                chatHistory.push({ role: "user", content: question });
+                chatHistory.push({ role: "assistant", content: data.answer });
+                if (chatHistory.length > 10) chatHistory = chatHistory.slice(-10);
+
+            } catch (e) {
+                removeTypingIndicator();
+                addResponseCard({
+                    answer: "Connection error. Please check the server is running.",
+                    headline: "ERROR",
+                    stats: [],
+                    chart: null,
+                    followups: []
+                });
+            }
+
+            input.disabled = false;
+            document.getElementById("send-btn").disabled = false;
+            input.focus();
+        }
+
+        function sendMessage() {
+            const input = document.getElementById("chat-input");
+            submitQuery(input.value.trim());
+        }
+
+        // Wire sidebar quick queries
+        document.querySelectorAll(".example-question[data-q]").forEach(el => {
+            el.addEventListener("click", () => {
+                const q = el.getAttribute("data-q");
+                if (q) submitQuery(q);
+            });
+        });
+
+        function scrollToBottom() {
+            const feed = document.getElementById("messages-container");
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        loadStats();
+    </script>
+</body>
+</html>
