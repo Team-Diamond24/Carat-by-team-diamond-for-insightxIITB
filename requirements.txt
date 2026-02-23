@@ -1,0 +1,8 @@
+flask
+flask-cors
+pandas
+plotly
+requests
+python-dotenv
+pytest
+openai
