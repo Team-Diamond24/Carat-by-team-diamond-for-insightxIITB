@@ -4,6 +4,9 @@ import time
 import plotly.express as px
 import plotly.utils
 import json
+from planner import code_to_plan
+from safe_exec import execute_plan
+from verify import verify_result
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -130,45 +133,76 @@ def generate_chart(result, user_question):
 
 
 def generate_followup_questions(user_question, result):
-    prompt = (
-        "A user asked this question about UPI payment data:\n"
-        "\"" + user_question + "\"\n\n"
-        "The result was:\n"
-        + str(result)[:500] + "\n\n"
-        "Suggest exactly 3 short follow-up questions.\n"
-        "Return ONLY a JSON array of 3 strings, nothing else.\n"
-        "Example: [\"Question 1?\", \"Question 2?\", \"Question 3?\"]"
-    )
-    response = call_ai(prompt)
-    try:
-        response = response.replace("```json", "").replace("```", "").strip()
-        if "</think>" in response:
-            response = response.split("</think>")[-1].strip()
-        questions = json.loads(response)
-        if isinstance(questions, list) and len(questions) == 3:
-            return questions
-    except Exception as e:
-        print(f"Followup generation error: {e}")
+    """Rule-based followup suggestions — no LLM call."""
     return [
-        "Which state has the highest failure rate?",
-        "How does this compare on weekends?",
-        "Which age group is most affected?"
+        "Break this down by state",
+        "Compare by device type",
+        "Trend over time",
     ]
+
+
+def generate_insight(user_question, result):
+    """Deterministic template-based insight — no LLM call."""
+    rows = len(df)
+
+    if isinstance(result, pd.Series) and len(result) > 0:
+        top_label = str(result.index[0])
+        top_value = round(float(result.iloc[0]), 2)
+        headline = f"{top_label} LEADS".upper()
+        insight = (
+            f"{top_label} ranks highest at {top_value:,.2f}. "
+            f"Analysis based on {rows:,} transactions in the dataset. "
+            f"The bottom entry is {result.index[-1]} at {round(float(result.iloc[-1]), 2):,.2f}."
+        )
+    elif isinstance(result, (int, float)):
+        headline = "METRIC COMPUTED"
+        insight = (
+            f"The computed value is ₹{float(result):,.2f} "
+            f"across {rows:,} transactions."
+        )
+    elif isinstance(result, pd.DataFrame):
+        headline = "DATA RETRIEVED"
+        insight = (
+            f"Query returned {len(result):,} rows "
+            f"from a total of {rows:,} transactions."
+        )
+    else:
+        headline = "ANALYSIS COMPLETE"
+        insight = f"Result: {str(result)[:200]}. Based on {rows:,} transactions."
+
+    return headline, insight
+
+
+CODE_CACHE = {}
 
 
 def get_full_answer(user_question, chat_history=None):
 
-    raw_code = ask_question(user_question)
-    code = clean_code(raw_code)
+    if user_question in CODE_CACHE:
+        code = CODE_CACHE[user_question]
+        print("Cache hit for:", user_question)
+    else:
+        raw_code = ask_question(user_question)
+        code = clean_code(raw_code)
+        CODE_CACHE[user_question] = code
     print("Cleaned code to execute:", code)
 
     try:
-        local_vars = {"df": df, "pd": pd}
-        exec(code, local_vars)
-        result = local_vars.get("result", None)
-        if result is None:
-            raise ValueError("Code ran but 'result' variable was not set")
+        plan = code_to_plan(code)
+        print("Parsed plan:", plan)
+        result = execute_plan(plan, df)
         print("Result:", result)
+    except (ValueError, KeyError) as parse_err:
+        print(f"Safe exec failed ({parse_err}), falling back to exec()")
+        try:
+            local_vars = {"df": df, "pd": pd}
+            exec(code, local_vars)
+            result = local_vars.get("result", None)
+            if result is None:
+                raise ValueError("Code ran but 'result' variable was not set")
+            print("Fallback result:", result)
+        except Exception as e:
+            raise e
     except Exception as e:
         print(f"Code execution error: {e}")
         return {
@@ -181,43 +215,10 @@ def get_full_answer(user_question, chat_history=None):
             "followups": []
         }
 
+    verification = verify_result(df, result)
     chart = generate_chart(result, user_question)
     followups = generate_followup_questions(user_question, result)
-
-    history_text = ""
-    if chat_history:
-        history_text = "Previous conversation:\n"
-        for msg in chat_history[-4:]:
-            history_text += msg["role"] + ": " + msg["content"] + "\n"
-        history_text += "\n"
-
-    explanation_prompt = (
-        history_text
-        + "Someone asked this question about UPI payment data:\n"
-        + "\"" + user_question + "\"\n\n"
-        + "The data analysis returned this result:\n"
-        + str(result)[:500] + "\n\n"
-        + "Respond like a sharp financial analyst giving a briefing.\n"
-        + "Return ONLY a JSON object with exactly two keys:\n"
-        + "\"headline\": a bold finding in ALL CAPS, max 6 words\n"
-        + "\"insight\": 2-3 sentences with actual numbers and one business reason\n"
-        + "Return ONLY the JSON, no explanation, no markdown, no think tags."
-    )
-
-    explanation_raw = call_ai(explanation_prompt)
-    print("Explanation raw:", explanation_raw)
-
-    try:
-        clean = explanation_raw.replace("```json", "").replace("```", "").strip()
-        if "</think>" in clean:
-            clean = clean.split("</think>")[-1].strip()
-        parsed = json.loads(clean)
-        headline = parsed.get("headline", "ANALYSIS COMPLETE")
-        insight = parsed.get("insight", explanation_raw)
-    except Exception as e:
-        print(f"Explanation parse error: {e}")
-        headline = "ANALYSIS COMPLETE"
-        insight = explanation_raw
+    headline, insight = generate_insight(user_question, result)
 
     stats = []
     if isinstance(result, pd.Series) and len(result) > 0:
@@ -236,5 +237,6 @@ def get_full_answer(user_question, chat_history=None):
         "data": str(result),
         "code": code,
         "chart": chart,
-        "followups": followups
+        "followups": followups,
+        "verification": verification
     }
