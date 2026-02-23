@@ -19,12 +19,15 @@ df.columns = (df.columns
               .str.replace(')', '')
               .str.lower())
 
+print("Dataset loaded. Columns:", df.columns.tolist())
+print("Shape:", df.shape)
+
 
 def call_ai(prompt):
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
-                model="google/gemma-3-12b-it:free",
+                model="deepseek/deepseek-r1",
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.choices[0].message.content
@@ -34,6 +37,7 @@ def call_ai(prompt):
                 print(f"Rate limited, waiting {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
+                print(f"AI call error: {str(e)}")
                 return "Error: " + str(e)
     return "Error: Too many retries"
 
@@ -56,13 +60,27 @@ def ask_question(user_question):
         "- day_of_week: Monday to Sunday\n"
         "- is_weekend: 1 = weekend, 0 = weekday\n"
         "- merchant_category: Food, Grocery, Fuel etc (only for P2M)\n\n"
-        "Write ONLY pandas code to answer this question.\n"
-        "Store answer in variable called 'result'.\n"
+        "Write ONLY executable pandas code to answer this question.\n"
+        "Store the final answer in a variable called 'result'.\n"
         "If result is a comparison or ranking, store as a pandas Series with named index.\n"
-        "No explanation, no print statements, no markdown.\n\n"
+        "Do not include any imports. Do not use print(). No markdown. No explanation.\n"
+        "Just raw Python code that can be executed with exec().\n\n"
         "Question: " + user_question
     )
-    return call_ai(prompt)
+    raw = call_ai(prompt)
+    print("Raw AI code response:", raw)
+    return raw
+
+
+def clean_code(raw_code):
+    code = raw_code
+    code = code.replace("```python", "")
+    code = code.replace("```", "")
+    code = code.replace("<think>", "")
+    if "</think>" in code:
+        code = code.split("</think>")[-1]
+    code = code.strip()
+    return code
 
 
 def generate_chart(result, user_question):
@@ -72,6 +90,7 @@ def generate_chart(result, user_question):
 
         chart_df = result.reset_index()
         chart_df.columns = ["Category", "Value"]
+        chart_df["Category"] = chart_df["Category"].astype(str)
 
         question_lower = user_question.lower()
 
@@ -79,33 +98,34 @@ def generate_chart(result, user_question):
             fig = px.line(
                 chart_df, x="Category", y="Value",
                 title=user_question, markers=True,
-                color_discrete_sequence=["#00d4aa"]
+                color_discrete_sequence=["#b1b2ff"]
             )
         elif any(word in question_lower for word in ["percentage", "share", "distribution", "proportion"]):
             fig = px.pie(
                 chart_df, names="Category", values="Value",
                 title=user_question,
-                color_discrete_sequence=["#00d4aa", "#3b82f6", "#b1b2ff", "#aac4ff"]
+                color_discrete_sequence=["#b1b2ff", "#aac4ff", "#d2daff", "#3730a3"]
             )
         else:
             fig = px.bar(
                 chart_df, x="Value", y="Category",
                 title=user_question, orientation="h",
-                color_discrete_sequence=["#00d4aa"]
+                color_discrete_sequence=["#b1b2ff"]
             )
+            fig.update_layout(yaxis=dict(autorange="reversed"))
 
         fig.update_layout(
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color="#3730a3", family="JetBrains Mono"),
             title_font_size=12,
-            margin=dict(t=30, r=20, b=40, l=100),
-            yaxis=dict(autorange="reversed")
+            margin=dict(t=30, r=20, b=40, l=120)
         )
 
         return json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig))
 
-    except Exception:
+    except Exception as e:
+        print(f"Chart generation error: {e}")
         return None
 
 
@@ -114,20 +134,21 @@ def generate_followup_questions(user_question, result):
         "A user asked this question about UPI payment data:\n"
         "\"" + user_question + "\"\n\n"
         "The result was:\n"
-        + str(result) + "\n\n"
-        "Suggest exactly 3 short follow-up questions the user might want to ask next.\n"
-        "Make them specific and directly related to the result.\n"
+        + str(result)[:500] + "\n\n"
+        "Suggest exactly 3 short follow-up questions.\n"
         "Return ONLY a JSON array of 3 strings, nothing else.\n"
         "Example: [\"Question 1?\", \"Question 2?\", \"Question 3?\"]"
     )
     response = call_ai(prompt)
     try:
         response = response.replace("```json", "").replace("```", "").strip()
+        if "</think>" in response:
+            response = response.split("</think>")[-1].strip()
         questions = json.loads(response)
         if isinstance(questions, list) and len(questions) == 3:
             return questions
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Followup generation error: {e}")
     return [
         "Which state has the highest failure rate?",
         "How does this compare on weekends?",
@@ -136,16 +157,22 @@ def generate_followup_questions(user_question, result):
 
 
 def get_full_answer(user_question, chat_history=None):
-    code = ask_question(user_question)
-    code = code.replace("```python", "").replace("```", "").strip()
+
+    raw_code = ask_question(user_question)
+    code = clean_code(raw_code)
+    print("Cleaned code to execute:", code)
 
     try:
-        local_vars = {"df": df}
+        local_vars = {"df": df, "pd": pd}
         exec(code, local_vars)
-        result = local_vars["result"]
+        result = local_vars.get("result", None)
+        if result is None:
+            raise ValueError("Code ran but 'result' variable was not set")
+        print("Result:", result)
     except Exception as e:
+        print(f"Code execution error: {e}")
         return {
-            "answer": "Sorry, could not compute that. Try rephrasing your question.",
+            "answer": "Execution error: " + str(e) + " | Code was: " + code,
             "headline": "QUERY ERROR",
             "stats": [],
             "data": None,
@@ -169,35 +196,37 @@ def get_full_answer(user_question, chat_history=None):
         + "Someone asked this question about UPI payment data:\n"
         + "\"" + user_question + "\"\n\n"
         + "The data analysis returned this result:\n"
-        + str(result) + "\n\n"
+        + str(result)[:500] + "\n\n"
         + "Respond like a sharp financial analyst giving a briefing.\n"
-        + "First line: a bold headline in ALL CAPS (max 6 words) summarizing the finding.\n"
-        + "Second part: 2-3 sentences of insight. Include the actual numbers.\n"
-        + "Give one business reason for the pattern.\n"
-        + "Format your response as JSON like this:\n"
-        + "{\"headline\": \"YOUR HEADLINE HERE\", \"insight\": \"Your 2-3 sentence insight here.\"}\n"
-        + "Return ONLY the JSON, nothing else."
+        + "Return ONLY a JSON object with exactly two keys:\n"
+        + "\"headline\": a bold finding in ALL CAPS, max 6 words\n"
+        + "\"insight\": 2-3 sentences with actual numbers and one business reason\n"
+        + "Return ONLY the JSON, no explanation, no markdown, no think tags."
     )
 
     explanation_raw = call_ai(explanation_prompt)
+    print("Explanation raw:", explanation_raw)
 
     try:
-        explanation_raw = explanation_raw.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(explanation_raw)
+        clean = explanation_raw.replace("```json", "").replace("```", "").strip()
+        if "</think>" in clean:
+            clean = clean.split("</think>")[-1].strip()
+        parsed = json.loads(clean)
         headline = parsed.get("headline", "ANALYSIS COMPLETE")
         insight = parsed.get("insight", explanation_raw)
-    except Exception:
+    except Exception as e:
+        print(f"Explanation parse error: {e}")
         headline = "ANALYSIS COMPLETE"
         insight = explanation_raw
 
     stats = []
     if isinstance(result, pd.Series) and len(result) > 0:
         stats = [
-            {"label": "HIGHEST", "value": str(result.index[0]) + " " + str(round(result.iloc[0], 2))},
-            {"label": "AVERAGE", "value": str(round(result.mean(), 2))},
-            {"label": "LOWEST", "value": str(result.index[-1]) + " " + str(round(result.iloc[-1], 2))}
+            {"label": "HIGHEST", "value": str(result.index[0]) + ": " + str(round(float(result.iloc[0]), 2))},
+            {"label": "AVERAGE", "value": str(round(float(result.mean()), 2))},
+            {"label": "LOWEST", "value": str(result.index[-1]) + ": " + str(round(float(result.iloc[-1]), 2))}
         ]
-    elif not isinstance(result, pd.Series):
+    elif result is not None and not isinstance(result, pd.Series):
         stats = [{"label": "RESULT", "value": str(result)}]
 
     return {
