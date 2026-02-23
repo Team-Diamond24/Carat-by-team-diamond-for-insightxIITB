@@ -1,7 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
-from engine import get_full_answer, df
+from engine import get_full_answer, generate_chart, df
 import os
+import json
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
@@ -28,8 +29,20 @@ def ask():
     if not question:
         return jsonify({"error": "No question provided"}), 400
 
+    history = history[-2:]
     result = get_full_answer(question, history)
-    return jsonify(result)
+
+    # Stage 1: headline + stats immediately (no chart)
+    stage1 = dict(result, chart=None, stage=1)
+
+    # Stage 2: full payload with chart
+    stage2 = dict(result, stage=2)
+
+    def generate():
+        yield json.dumps(stage1) + "\n"
+        yield json.dumps(stage2) + "\n"
+
+    return Response(stream_with_context(generate()), content_type="application/x-ndjson")
 
 
 @app.route("/stats")

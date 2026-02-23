@@ -31,7 +31,8 @@ def call_ai(prompt):
         try:
             response = client.chat.completions.create(
                 model="deepseek/deepseek-r1",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=600
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -48,21 +49,11 @@ def call_ai(prompt):
 def ask_question(user_question):
     prompt = (
         "You are a data analyst. You have a pandas dataframe called 'df' with 250,000 UPI transactions.\n\n"
-        "Columns available:\n"
-        "- transaction_type: P2P, P2M, Bill Payment, Recharge\n"
-        "- amount_inr: amount in rupees\n"
-        "- transaction_status: SUCCESS or FAILED\n"
-        "- sender_age_group: 18-25, 26-35, 36-45, 46-55, 56+\n"
-        "- sender_state: Indian state\n"
-        "- sender_bank: SBI, HDFC, ICICI, Axis, PNB, Kotak, IndusInd, Yes Bank\n"
-        "- receiver_bank: same as sender_bank\n"
-        "- device_type: Android, iOS, Web\n"
-        "- network_type: 4G, 5G, WiFi, 3G\n"
-        "- fraud_flag: 1 = flagged, 0 = normal\n"
-        "- hour_of_day: 0 to 23\n"
-        "- day_of_week: Monday to Sunday\n"
-        "- is_weekend: 1 = weekend, 0 = weekday\n"
-        "- merchant_category: Food, Grocery, Fuel etc (only for P2M)\n\n"
+        "DataFrame df has columns:\n"
+        "transaction_type, amount_inr, transaction_status, sender_age_group,\n"
+        "sender_state, sender_bank, receiver_bank, device_type,\n"
+        "network_type, fraud_flag, hour_of_day, day_of_week,\n"
+        "is_weekend, merchant_category\n\n"
         "Write ONLY executable pandas code to answer this question.\n"
         "Store the final answer in a variable called 'result'.\n"
         "If result is a comparison or ranking, store as a pandas Series with named index.\n"
@@ -88,35 +79,94 @@ def clean_code(raw_code):
 
 def generate_chart(result, user_question):
     try:
-        if not isinstance(result, pd.Series):
+        if result is None:
             return None
 
-        chart_df = result.reset_index()
-        chart_df.columns = ["Category", "Value"]
-        chart_df["Category"] = chart_df["Category"].astype(str)
+        # --- Handle pd.Series (most common from groupby) ---
+        if isinstance(result, pd.Series):
+            chart_df = result.reset_index()
+            chart_df.columns = ["Category", "Value"]
+            x_label = result.index.name or "Category"
+            y_label = result.name or "Value"
 
-        question_lower = user_question.lower()
+            # Auto-detect ratio values (0–1) and convert to percentage
+            if chart_df["Value"].max() <= 1 and chart_df["Value"].min() >= 0:
+                chart_df["Value"] = chart_df["Value"] * 100
+                y_label = "Percentage (%)"
 
-        if any(word in question_lower for word in ["hour", "time", "trend", "over", "day", "week"]):
-            fig = px.line(
-                chart_df, x="Category", y="Value",
-                title=user_question, markers=True,
-                color_discrete_sequence=["#b1b2ff"]
-            )
-        elif any(word in question_lower for word in ["percentage", "share", "distribution", "proportion"]):
-            fig = px.pie(
-                chart_df, names="Category", values="Value",
-                title=user_question,
-                color_discrete_sequence=["#b1b2ff", "#aac4ff", "#d2daff", "#3730a3"]
-            )
+            chart_title = f"{y_label} by {x_label}"
+
+            # 1. Datetime or hour/day index → line chart
+            if (pd.api.types.is_datetime64_any_dtype(result.index)
+                    or str(x_label).lower() in ("hour_of_day", "day_of_week", "month", "date", "year")):
+                chart_df["Category"] = chart_df["Category"].astype(str)
+                fig = px.line(
+                    chart_df, x="Category", y="Value",
+                    title=chart_title, markers=True,
+                    labels={"Category": x_label, "Value": y_label},
+                    color_discrete_sequence=["#b1b2ff"]
+                )
+
+            # 2. <=6 categories and values sum ≈ 100% → pie chart
+            elif len(chart_df) <= 6 and 95 <= chart_df["Value"].sum() <= 105:
+                chart_df["Category"] = chart_df["Category"].astype(str)
+                fig = px.pie(
+                    chart_df, names="Category", values="Value",
+                    title=chart_title,
+                    color_discrete_sequence=["#b1b2ff", "#aac4ff", "#d2daff", "#3730a3"]
+                )
+
+            # 3. Categorical index + numeric values → horizontal bar
+            else:
+                chart_df = chart_df.sort_values("Value", ascending=False)
+                chart_df["Category"] = chart_df["Category"].astype(str)
+                fig = px.bar(
+                    chart_df, x="Value", y="Category",
+                    title=chart_title, orientation="h",
+                    labels={"Category": x_label, "Value": y_label},
+                    color_discrete_sequence=["#b1b2ff"]
+                )
+                fig.update_layout(yaxis=dict(autorange="reversed"))
+
+        # --- Handle pd.DataFrame ---
+        elif isinstance(result, pd.DataFrame) and len(result) > 0:
+            numeric_cols = result.select_dtypes(include="number").columns.tolist()
+            non_numeric_cols = result.select_dtypes(exclude="number").columns.tolist()
+
+            # 4. Two numeric columns → scatter
+            if len(numeric_cols) >= 2:
+                x_col, y_col = numeric_cols[0], numeric_cols[1]
+                fig = px.scatter(
+                    result, x=x_col, y=y_col,
+                    title=user_question,
+                    labels={x_col: x_col, y_col: y_col},
+                    color_discrete_sequence=["#b1b2ff"]
+                )
+
+            # 5. One numeric column only → histogram
+            elif len(numeric_cols) == 1:
+                col = numeric_cols[0]
+                fig = px.histogram(
+                    result, x=col,
+                    title=user_question,
+                    labels={col: col},
+                    color_discrete_sequence=["#b1b2ff"]
+                )
+
+            # 6. One categorical + one numeric → bar
+            elif len(non_numeric_cols) >= 1 and len(numeric_cols) >= 1:
+                fig = px.bar(
+                    result, x=non_numeric_cols[0], y=numeric_cols[0],
+                    title=user_question,
+                    labels={non_numeric_cols[0]: non_numeric_cols[0], numeric_cols[0]: numeric_cols[0]},
+                    color_discrete_sequence=["#b1b2ff"]
+                )
+            else:
+                return None
         else:
-            fig = px.bar(
-                chart_df, x="Value", y="Category",
-                title=user_question, orientation="h",
-                color_discrete_sequence=["#b1b2ff"]
-            )
-            fig.update_layout(yaxis=dict(autorange="reversed"))
+            return None
 
+        # Common layout
         fig.update_layout(
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
@@ -146,29 +196,16 @@ def generate_insight(user_question, result):
     rows = len(df)
 
     if isinstance(result, pd.Series) and len(result) > 0:
-        top_label = str(result.index[0])
-        top_value = round(float(result.iloc[0]), 2)
-        headline = f"{top_label} LEADS".upper()
-        insight = (
-            f"{top_label} ranks highest at {top_value:,.2f}. "
-            f"Analysis based on {rows:,} transactions in the dataset. "
-            f"The bottom entry is {result.index[-1]} at {round(float(result.iloc[-1]), 2):,.2f}."
-        )
-    elif isinstance(result, (int, float)):
-        headline = "METRIC COMPUTED"
-        insight = (
-            f"The computed value is ₹{float(result):,.2f} "
-            f"across {rows:,} transactions."
-        )
+        metric = str(result.index[0])
     elif isinstance(result, pd.DataFrame):
-        headline = "DATA RETRIEVED"
-        insight = (
-            f"Query returned {len(result):,} rows "
-            f"from a total of {rows:,} transactions."
-        )
+        metric = f"{len(result)} rows"
+    elif isinstance(result, (int, float)):
+        metric = f"₹{float(result):,.2f}"
     else:
-        headline = "ANALYSIS COMPLETE"
-        insight = f"Result: {str(result)[:200]}. Based on {rows:,} transactions."
+        metric = str(result)[:50]
+
+    headline = f"{metric} computed"
+    insight = f"Based on {rows:,} transactions."
 
     return headline, insight
 
