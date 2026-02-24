@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from engine import get_full_answer, generate_chart, df
 import os
@@ -32,17 +32,7 @@ def ask():
     history = history[-2:]
     result = get_full_answer(question, history)
 
-    # Stage 1: headline + stats immediately (no chart)
-    stage1 = dict(result, chart=None, stage=1)
-
-    # Stage 2: full payload with chart
-    stage2 = dict(result, stage=2)
-
-    def generate():
-        yield json.dumps(stage1) + "\n"
-        yield json.dumps(stage2) + "\n"
-
-    return Response(stream_with_context(generate()), content_type="application/x-ndjson")
+    return jsonify(result)
 
 
 @app.route("/stats")
@@ -71,4 +61,4 @@ if __name__ == "__main__":
     print("Carat by Team Diamond starting...")
     print("Landing page: http://localhost:5050")
     print("Dashboard:    http://localhost:5050/dashboard")
-    app.run(debug=True, port=5050)
+    app.run(port=5050)

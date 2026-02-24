@@ -240,9 +240,17 @@
             div.innerHTML = '<div class="flex gap-2 items-center"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span><span class="text-xs font-mono text-text-muted ml-2">Analysing...</span></div>';
             container.appendChild(div);
             scrollToBottom();
+            // Start timeout tracker
+            window._queryStartTime = Date.now();
+            window._queryTimer = setInterval(() => {
+                const elapsed = Math.round((Date.now() - window._queryStartTime) / 1000);
+                const label = div.querySelector('.text-text-muted');
+                if (label) label.textContent = `Analysing... ${elapsed}s`;
+            }, 1000);
         }
 
         function removeTypingIndicator() {
+            if (window._queryTimer) clearInterval(window._queryTimer);
             const el = document.getElementById("typing-indicator");
             if (el) el.remove();
         }
@@ -268,6 +276,23 @@
                 ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:260px;"></div>`
                 : "";
 
+            // Build data display section for results without charts
+            let dataHTML = "";
+            if (!data.chart && data.data && data.data !== "None") {
+                const dataStr = String(data.data);
+                if (dataStr.length < 200) {
+                    dataHTML = `<div class="border-2 border-accent bg-bg p-4 mt-3 sharp-corners">
+                        <span class="text-xxs font-bold text-text-muted uppercase tracking-widest block mb-2">RESULT</span>
+                        <span class="text-lg font-mono font-black text-text-primary">${dataStr}</span>
+                    </div>`;
+                } else {
+                    dataHTML = `<details class="mt-3">
+                        <summary class="text-xxs font-bold text-text-muted uppercase tracking-widest cursor-pointer">View Raw Data</summary>
+                        <pre class="border-2 border-accent bg-bg p-3 mt-2 text-xs font-mono text-text-secondary overflow-x-auto max-h-48 sharp-corners">${dataStr}</pre>
+                    </details>`;
+                }
+            }
+
             const now = new Date();
             const timestamp = "T+" + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":" + String(now.getSeconds()).padStart(2,"0");
 
@@ -283,6 +308,7 @@
                         ${data.answer}
                     </div>
                     ${chartHTML}
+                    ${dataHTML}
                     ${statsHTML ? `<div class="flex flex-wrap gap-4 mb-4 mt-2">${statsHTML}</div>` : ""}
                     ${followupsHTML ? `
                     <div class="pt-4 border-t-2 border-accent/40">
@@ -338,12 +364,17 @@
             addUserQuery(question);
             addTypingIndicator();
 
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
+
             try {
                 const res = await fetch("/ask", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ question, history: chatHistory })
+                    body: JSON.stringify({ question, history: chatHistory }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
                 const data = await res.json();
                 removeTypingIndicator();
                 addResponseCard(data);
@@ -353,10 +384,14 @@
                 if (chatHistory.length > 10) chatHistory = chatHistory.slice(-10);
 
             } catch (e) {
+                clearTimeout(timeoutId);
                 removeTypingIndicator();
+                const isTimeout = e.name === "AbortError";
                 addResponseCard({
-                    answer: "Connection error. Please check the server is running.",
-                    headline: "ERROR",
+                    answer: isTimeout
+                        ? "Request timed out after 45 seconds. The server may be overloaded. Try rephrasing your query."
+                        : "Connection error. Please check the server is running.",
+                    headline: isTimeout ? "TIMEOUT" : "ERROR",
                     stats: [],
                     chart: null,
                     followups: []

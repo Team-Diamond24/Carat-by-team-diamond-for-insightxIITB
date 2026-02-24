@@ -49,7 +49,13 @@ def _handle_filter(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Column '{column}' not found in dataframe. "
                          f"Available columns: {list(df.columns)}")
 
-    return df[df[column] == value]
+    result = df[df[column] == value]
+
+    # Case-insensitive fallback for string values
+    if len(result) == 0 and isinstance(value, str):
+        result = df[df[column].astype(str).str.lower() == value.lower()]
+
+    return result
 
 
 def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
@@ -193,6 +199,22 @@ def execute_plan(
     """
     if not isinstance(plan, dict):
         raise TypeError(f"Plan must be a dict, got {type(plan).__name__}")
+
+    # Accept both 'op' (from planner) and 'operation' as the key
+    if "op" in plan and "operation" not in plan:
+        plan = dict(plan, operation=plan["op"])
+
+    # Translate planner's groupby format to safe_exec's expected keys
+    if plan.get("operation") == "groupby" and "by" in plan and "agg" in plan:
+        by_cols = plan["by"]
+        agg_dict = plan["agg"]
+        first_col = list(agg_dict.keys())[0]
+        first_func = list(agg_dict.values())[0]
+        plan = dict(plan,
+            group_by=by_cols[0] if isinstance(by_cols, list) else by_cols,
+            agg_column=first_col,
+            agg_func=first_func
+        )
 
     if "operation" not in plan:
         raise KeyError("Plan dictionary must contain an 'operation' key. "

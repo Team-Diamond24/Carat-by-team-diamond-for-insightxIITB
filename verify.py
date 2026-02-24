@@ -46,6 +46,12 @@ def verify_result(df_used: pd.DataFrame, result: Any) -> Dict[str, Any]:
 
     if result is None:
         errors.append("Result is None")
+    elif isinstance(result, float) and (result != result or result == float('inf') or result == float('-inf')):
+        errors.append("Result is NaN or infinite")
+    elif isinstance(result, pd.Series) and result.empty:
+        errors.append("Result Series is empty")
+    elif isinstance(result, pd.DataFrame) and result.empty:
+        errors.append("Result DataFrame is empty")
 
     if errors:
         return {
