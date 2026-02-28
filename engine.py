@@ -101,7 +101,7 @@ def resolve_entities(question, df):
                     exists_in_data = True
                     break
             if exists_in_data and real_name.lower() not in q_lower:
-                pattern = re.compile(re.escape(alias), re.IGNORECASE)
+                pattern = re.compile(r'\b' + re.escape(alias) + r'\b', re.IGNORECASE)
                 new_question = pattern.sub(real_name, question)
                 if new_question != question:
                     corrections.append((alias, real_name))
@@ -636,23 +636,29 @@ def try_fast_query(question, df):
 FAST_CACHE = {}
 _CACHE_MAX = 200
 
+import hashlib
 
-def canonicalize(question):
-    """Normalize question for cache key."""
-    return question.strip().lower()
+def canonicalize(question, chat_history=None):
+    """Normalize question and mix with history for cache key."""
+    norm_q = question.strip().lower()
+    if not chat_history:
+        return norm_q
+    
+    recent = chat_history[-4:]
+    history_str = "|".join([f"{msg.get('role', '')}:{msg.get('content', '')}" for msg in recent])
+    hist_hash = hashlib.md5(history_str.encode()).hexdigest()
+    return f"{norm_q}::{hist_hash}"
 
-
-def get_cached(question):
+def get_cached(question, chat_history=None):
     """Return cached result or None."""
-    return FAST_CACHE.get(canonicalize(question))
+    return FAST_CACHE.get(canonicalize(question, chat_history))
 
-
-def set_cached(question, value):
+def set_cached(question, value, chat_history=None):
     """Store result in cache, evict oldest if full."""
     if len(FAST_CACHE) >= _CACHE_MAX:
         oldest = next(iter(FAST_CACHE))
         del FAST_CACHE[oldest]
-    FAST_CACHE[canonicalize(question)] = value
+    FAST_CACHE[canonicalize(question, chat_history)] = value
 
 
 # --- Question Validator ---
@@ -748,41 +754,24 @@ def get_full_answer(user_question, chat_history=None):
 
     try:
         plan = code_to_plan(code)
-        print(f"[LLM] Parsed plan: {plan}")
+        print(f"[LLM] Parsed AST plan: {plan}")
         result = execute_plan(plan, df)
         print(f"[LLM] Safe exec result type: {type(result).__name__}")
 
-        # Validate: if planner returned a raw DataFrame, it likely missed
-        # the aggregation. Fall through to exec for:
-        #   - empty DataFrame (0 rows = bad filter value)
-        #   - large DataFrame (>1000 rows = missed aggregation)
-        if isinstance(result, pd.DataFrame) and (len(result) == 0 or len(result) > 1000):
-            print(f"[LLM] Planner returned DataFrame with {len(result)} rows, likely incomplete parse")
-            raise ValueError("Incomplete plan")
-
-    except (ValueError, KeyError, TypeError) as parse_err:
-        print(f"[LLM] Planner failed ({parse_err}), falling back to guarded exec()")
-        try:
-            local_vars = {"df": df.copy(), "pd": pd}
-            exec(code, {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "round": round, "sorted": sorted, "list": list, "dict": dict, "tuple": tuple, "range": range, "enumerate": enumerate, "zip": zip, "min": min, "max": max, "sum": sum, "abs": abs, "True": True, "False": False, "None": None}}, local_vars)
-            result = local_vars.get("result", None)
-            if result is None:
-                raise ValueError("Code ran but 'result' variable was not set")
-            print(f"[LLM] Exec fallback result type: {type(result).__name__}")
-        except Exception as exec_err:
-            print(f"[LLM] Exec fallback ALSO FAILED: {exec_err}")
-            error_response = {
-                "answer": "Unable to interpret this query. Please try rephrasing.",
-                "headline": "Clarification required",
-                "stats": [],
-                "data": None,
-                "code": code,
-                "chart": None,
-                "followups": ["Break this down by state", "Compare by device type", "Trend over time"],
-                "verification": {"rows_used": len(df), "status": "error", "error": str(exec_err)}
-            }
-            print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
-            return error_response
+    except Exception as parse_err:
+        print(f"[LLM] AST Planner structurally failed ({parse_err})")
+        error_response = {
+            "answer": "Unable to interpret or safely execute this query. Please try rephrasing.",
+            "headline": "Clarification required",
+            "stats": [],
+            "data": None,
+            "code": code,
+            "chart": None,
+            "followups": ["Break this down by state", "Compare by device type", "Trend over time"],
+            "verification": {"rows_used": len(df), "status": "error", "error": str(parse_err)}
+        }
+        print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
+        return error_response
     except Exception as e:
         print(f"[PIPELINE] Code execution error: {e}")
         import traceback

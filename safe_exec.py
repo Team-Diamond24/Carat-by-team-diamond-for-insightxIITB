@@ -89,9 +89,15 @@ def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
     agg_column = plan["agg_column"]
     agg_func = plan["agg_func"]
 
-    if group_by not in df.columns:
-        raise ValueError(f"Group-by column '{group_by}' not found. "
-                         f"Available columns: {list(df.columns)}")
+    if isinstance(group_by, list):
+        for col in group_by:
+            if col not in df.columns:
+                raise ValueError(f"Group-by column '{col}' not found. Available: {list(df.columns)}")
+    else:
+        if group_by not in df.columns:
+            raise ValueError(f"Group-by column '{group_by}' not found. "
+                             f"Available columns: {list(df.columns)}")
+                             
     if agg_column not in df.columns:
         raise ValueError(f"Aggregation column '{agg_column}' not found. "
                          f"Available columns: {list(df.columns)}")
@@ -101,6 +107,10 @@ def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
 
     grouped = df.groupby(group_by)[agg_column]
     result = getattr(grouped, agg_func)()
+    
+    # Flatten MultiIndex to simple strings so downstream charting doesn't break
+    if isinstance(result.index, pd.MultiIndex):
+         result.index = result.index.map(lambda x: ' - '.join(str(e) for e in x))
 
     return result
 
@@ -124,12 +134,48 @@ def _handle_single_agg(func_name: str):
     return handler
 
 
+def _handle_filter_multi(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter rows for multiple conditions using AND logic.
+
+    Plan keys:
+        filters (list of dict): List of feature dictionaries with 'column' and 'value'.
+    """
+    filters = plan.get("filters", [])
+    if not filters:
+        return df
+        
+    mask = pd.Series(True, index=df.index)
+    for f in filters:
+        column = f["column"]
+        value = f["value"]
+        if column not in df.columns:
+            raise ValueError(f"Column '{column}' not found.")
+        mask &= (df[column] == value)
+        
+    result = df[mask]
+    
+    # Case insensitive fallback
+    if len(result) == 0:
+        mask_fallback = pd.Series(True, index=df.index)
+        for f in filters:
+             column = f["column"]
+             value = f["value"]
+             if isinstance(value, str):
+                  mask_fallback &= (df[column].astype(str).str.lower() == value.lower())
+             else:
+                  mask_fallback &= (df[column] == value)
+        result = df[mask_fallback]
+        
+    return result
+
 # ---------------------------------------------------------------------------
 # Operation dispatch registry
 # ---------------------------------------------------------------------------
 
 _OPERATION_HANDLERS = {
     "filter":  _handle_filter,
+    "filter_multi": _handle_filter_multi,
     "groupby": _handle_groupby,
     "mean":    _handle_mean,
     "sum":     _handle_single_agg("sum"),
@@ -151,54 +197,7 @@ def execute_plan(
     plan: Dict[str, Any],
     df: pd.DataFrame,
 ) -> Union[pd.DataFrame, pd.Series, float]:
-    """
-    Execute a structured operation plan against a pandas DataFrame.
-
-    This function acts as a safe, deterministic dispatcher. It does NOT
-    use exec() or eval() at any point. Instead, it maps the "operation"
-    key in the plan dictionary to a dedicated handler function.
-
-    Args:
-        plan: A dictionary describing the operation to perform.
-              Must contain an "operation" key whose value is one of:
-              "filter", "groupby", "mean".
-              Additional keys depend on the operation (see individual
-              handler docstrings above).
-        df:   The pandas DataFrame to operate on.
-
-    Returns:
-        The result of the operation — a DataFrame, Series, or scalar,
-        depending on the operation type.
-
-    Raises:
-        ValueError: If the operation is unknown or required keys are
-                    missing / invalid.
-        KeyError:   If required plan keys are absent.
-
-    Examples:
-        >>> execute_plan({"operation": "mean", "column": "amount_inr"}, df)
-        1311.42
-
-        >>> execute_plan({
-        ...     "operation": "filter",
-        ...     "column": "transaction_status",
-        ...     "value": "FAILED"
-        ... }, df)
-           transaction_type  amount_inr transaction_status  ...
-        3            P2P         1100              FAILED  ...
-
-        >>> execute_plan({
-        ...     "operation": "groupby",
-        ...     "group_by": "sender_bank",
-        ...     "agg_column": "amount_inr",
-        ...     "agg_func": "sum"
-        ... }, df)
-        sender_bank
-        Axis        12345678
-        HDFC        23456789
-        ...
-        Name: amount_inr, dtype: int64
-    """
+    """Execute a structured operation plan against a pandas DataFrame."""
     if not isinstance(plan, dict):
         raise TypeError(f"Plan must be a dict, got {type(plan).__name__}")
 
@@ -213,7 +212,7 @@ def execute_plan(
         first_col = list(agg_dict.keys())[0]
         first_func = list(agg_dict.values())[0]
         plan = dict(plan,
-            group_by=by_cols[0] if isinstance(by_cols, list) else by_cols,
+            group_by=by_cols,  # Keep the list untouched
             agg_column=first_col,
             agg_func=first_func
         )
@@ -232,3 +231,4 @@ def execute_plan(
 
     handler = _OPERATION_HANDLERS[operation]
     return handler(plan, df)
+
