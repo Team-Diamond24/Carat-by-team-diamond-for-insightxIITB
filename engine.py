@@ -9,14 +9,25 @@ from safe_exec import execute_plan
 from verify import verify_result
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY", "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"),
+    api_key=os.environ.get("OPENROUTER_API_KEY"),
     timeout=30.0
 )
 
-df = pd.read_csv("upi_transactions_2024.csv")
+USE_CSV = os.environ.get("USE_CSV", "false").lower() == "true"
+
+if USE_CSV:
+    df = pd.read_csv("upi_transactions_2024.csv")
+    print("Dataset loaded from CSV.")
+else:
+    from db import load_transactions
+    df = load_transactions()
+    print("Dataset loaded from PostgreSQL.")
 
 df.columns = (df.columns
               .str.strip()
@@ -25,7 +36,7 @@ df.columns = (df.columns
               .str.replace(')', '')
               .str.lower())
 
-print("Dataset loaded. Columns:", df.columns.tolist())
+print("Columns:", df.columns.tolist())
 print("Shape:", df.shape)
 
 
@@ -59,16 +70,29 @@ def ask_question(user_question, chat_history=None):
             history_context += f"{role}: {content}\n"
         history_context = f"Recent conversation:\n{history_context}\n"
 
+    # Build column info dynamically from the actual DataFrame
+    col_list = ", ".join(df.columns.tolist())
+    row_count = len(df)
+
+    # Build sample values for key categorical columns
+    value_hints = []
+    for col in df.columns:
+        if df[col].dtype == "object" and df[col].nunique() <= 15:
+            vals = ", ".join(str(v) for v in df[col].unique()[:10])
+            value_hints.append(f"{col} ({vals})")
+        elif col in ("fraud_flag", "is_weekend"):
+            value_hints.append(f"{col} (0 or 1)")
+        elif col in ("hour_of_day",):
+            value_hints.append(f"{col} (0-23)")
+        elif col in ("amount_inr",):
+            value_hints.append(f"{col} (numeric, INR)")
+        else:
+            value_hints.append(col)
+    col_detail = "\n".join(value_hints)
+
     prompt = (
-        "You are a data analyst. You have a pandas dataframe called 'df' with 250,000 UPI transactions.\n\n"
-        "DataFrame df has columns:\n"
-        "transaction_type (P2P, P2M, Bill Payment, Recharge), amount_inr (numeric),\n"
-        "transaction_status (SUCCESS, FAILED), sender_age_group (18-25, 26-35, 36-45, 46-55, 56+),\n"
-        "sender_state (Indian states), sender_bank (SBI, HDFC, ICICI, Axis, PNB, Kotak, IndusInd, Yes Bank),\n"
-        "receiver_bank (same banks), device_type (Android, iOS, Web),\n"
-        "network_type (4G, 5G, WiFi, 3G), fraud_flag (0 or 1),\n"
-        "hour_of_day (0-23), day_of_week (Monday-Sunday), is_weekend (0 or 1),\n"
-        "merchant_category (Food, Grocery, Fuel, etc)\n\n"
+        f"You are a data analyst. You have a pandas dataframe called 'df' with {row_count:,} UPI transactions.\n\n"
+        f"DataFrame df columns and values:\n{col_detail}\n\n"
         + history_context +
         "Write ONLY executable pandas code to answer this question.\n"
         "Store the final answer in a variable called 'result'.\n"
@@ -206,20 +230,49 @@ def generate_followup_questions(user_question, result):
 
 
 def generate_insight(user_question, result):
-    """Deterministic template-based insight — no LLM call."""
+    """Context-aware insight — detects result type and formats accordingly."""
     rows = len(df)
+    q = user_question.lower()
+
+    # Detect if the result represents a percentage
+    is_pct = any(w in q for w in ["rate", "percent", "percentage", "ratio", "proportion", "fraud", "success", "failure"])
+    # Detect if the result represents a count
+    is_count = any(w in q for w in ["count", "total", "how many", "number of", "volume"])
 
     if isinstance(result, pd.Series) and len(result) > 0:
-        metric = str(result.index[0])
-    elif isinstance(result, pd.DataFrame):
-        metric = f"{len(result)} rows"
-    elif isinstance(result, (int, float)):
-        metric = f"₹{float(result):,.2f}"
-    else:
-        metric = str(result)[:50]
+        top_idx = result.idxmax()
+        top_val = result.max()
+        bot_idx = result.idxmin()
+        bot_val = result.min()
 
-    headline = f"{metric} computed"
-    insight = f"Based on {rows:,} transactions."
+        if is_pct:
+            headline = f"{top_idx}: {float(top_val):.2f}%"
+            insight = f"{top_idx} leads at {float(top_val):.2f}%, while {bot_idx} is lowest at {float(bot_val):.2f}%. Based on {rows:,} transactions."
+        elif is_count:
+            headline = f"{top_idx}: {int(top_val):,}"
+            insight = f"{top_idx} has the highest count with {int(top_val):,}. {bot_idx} has the least with {int(bot_val):,}. Based on {rows:,} transactions."
+        else:
+            headline = f"{top_idx}: ₹{float(top_val):,.2f}"
+            insight = f"{top_idx} leads with ₹{float(top_val):,.2f}. {bot_idx} is lowest at ₹{float(bot_val):,.2f}. Based on {rows:,} transactions."
+
+    elif isinstance(result, pd.DataFrame):
+        headline = f"{len(result):,} rows computed"
+        insight = f"Returned {len(result):,} rows from {rows:,} total transactions."
+
+    elif isinstance(result, (int, float)):
+        val = float(result)
+        if is_pct:
+            headline = f"{val:.2f}%"
+            insight = f"The result is {val:.2f}%. Based on {rows:,} transactions."
+        elif is_count:
+            headline = f"{int(val):,}"
+            insight = f"The count is {int(val):,}. Based on {rows:,} transactions."
+        else:
+            headline = f"₹{val:,.2f}"
+            insight = f"The value is ₹{val:,.2f}. Based on {rows:,} transactions."
+    else:
+        headline = str(result)[:60]
+        insight = f"Based on {rows:,} transactions."
 
     return headline, insight
 
@@ -228,6 +281,7 @@ def _build_fast_response(result, question, headline, insight):
     """Helper to build a standard response dict from a fast-path result."""
     chart = generate_chart(result, question)
     verification = verify_result(df, result)
+    followups = generate_followup_questions(question, result)
     stats = []
     if isinstance(result, pd.Series) and len(result) > 0:
         stats = [
@@ -244,18 +298,63 @@ def _build_fast_response(result, question, headline, insight):
         "data": str(result),
         "code": "# fast path — no LLM",
         "chart": chart,
-        "followups": ["Break this down by state", "Compare by device type", "Trend over time"],
+        "followups": followups,
         "verification": verification,
         "skip_llm": True
     }
 
 
 def try_fast_query(question, df):
-    """Deterministic fast path — skips LLM for common queries."""
+    """Deterministic fast path — skips LLM for common queries.
+    
+    PATTERN ORDER: most-specific first, least-specific last.
+    Cross-dimension queries (fraud×state) before single-dimension (top state).
+    """
     q = question.lower()
 
-    # 0) Which bank fails most / failure by bank
-    if ("fail" in q or "failed" in q) and "bank" in q:
+    # ===== CROSS-DIMENSION: fraud/failure × dimension =====
+
+    # 1) Fraud by state
+    if any(w in q for w in ["fraud", "flagged"]) and "state" in q:
+        fraud_by_state = df.groupby("sender_state")["fraud_flag"].mean().round(4) * 100
+        fraud_by_state = fraud_by_state.sort_values(ascending=False)
+        return _build_fast_response(
+            fraud_by_state, question,
+            f"{fraud_by_state.index[0]} has highest fraud",
+            f"{fraud_by_state.index[0]} has the highest fraud rate at {fraud_by_state.iloc[0]:.2f}%. Based on {len(df):,} transactions."
+        )
+
+    # 2) Fraud by bank
+    if any(w in q for w in ["fraud", "flagged"]) and "bank" in q:
+        fraud_by_bank = df.groupby("sender_bank")["fraud_flag"].mean().round(4) * 100
+        fraud_by_bank = fraud_by_bank.sort_values(ascending=False)
+        return _build_fast_response(
+            fraud_by_bank, question,
+            f"{fraud_by_bank.index[0]} has highest fraud",
+            f"{fraud_by_bank.index[0]} has the highest fraud rate at {fraud_by_bank.iloc[0]:.2f}%. Based on {len(df):,} transactions."
+        )
+
+    # 3) Fraud in high-value transactions
+    if any(w in q for w in ["fraud", "flagged"]) and any(w in q for w in ["high-value", "over", "large", "above"]):
+        high_value = df[df["amount_inr"] >= 5000]
+        fraud_pct = round(high_value["fraud_flag"].mean() * 100, 2)
+        return _build_fast_response(
+            fraud_pct, question,
+            f"{fraud_pct}% fraud rate",
+            f"{fraud_pct}% of high-value transactions (≥₹5,000) are flagged. Based on {len(high_value):,} transactions."
+        )
+
+    # 4) Overall fraud rate (guarded: NOT state, NOT bank — those are handled above)
+    if any(w in q for w in ["fraud", "flagged"]) and ("rate" in q or "percent" in q or "how" in q or "%" in q or "what" in q):
+        fraud_pct = round(df["fraud_flag"].mean() * 100, 2)
+        return _build_fast_response(
+            fraud_pct, question,
+            f"{fraud_pct}% fraud rate",
+            f"Overall fraud flag rate is {fraud_pct}% across {len(df):,} transactions."
+        )
+
+    # 5) Failure by bank
+    if ("fail" in q or "failed" in q or "failure" in q) and "bank" in q:
         failed = df[df["transaction_status"] == "FAILED"]
         counts = failed["sender_bank"].value_counts()
         return _build_fast_response(
@@ -264,27 +363,8 @@ def try_fast_query(question, df):
             f"{counts.index[0]} leads in failed transactions with {counts.iloc[0]:,} failures."
         )
 
-    # A) Age group + P2P
-    if "age group" in q and "p2p" in q:
-        data = df[df["transaction_type"] == "P2P"]
-        counts = data["sender_age_group"].value_counts()
-        return _build_fast_response(
-            counts, question,
-            "P2P transfers by age group",
-            f"{counts.idxmax()} has the highest P2P transfers"
-        )
-
-    # B) Average transaction amount
-    if "average" in q and ("transaction" in q or "amount" in q):
-        avg = round(float(df["amount_inr"].mean()), 2)
-        return _build_fast_response(
-            avg, question,
-            f"₹{avg:,.2f} computed",
-            f"The average transaction amount is ₹{avg:,.2f} across {len(df):,} transactions."
-        )
-
-    # C) Failure rate by device
-    if "failure" in q and ("rate" in q or "percent" in q) and any(w in q for w in ["device", "android", "ios"]):
+    # 6) Failure rate by device
+    if ("failure" in q or "fail" in q) and any(w in q for w in ["device", "android", "ios"]):
         grouped = df.groupby("device_type")["transaction_status"].apply(
             lambda x: round((x == "FAILED").sum() / len(x) * 100, 2)
         )
@@ -294,7 +374,28 @@ def try_fast_query(question, df):
             f"{grouped.idxmax()} has the highest failure rate at {grouped.max():.2f}%."
         )
 
-    # D) Peak merchant hours
+    # ===== SPECIFIC SINGLE-DIMENSION =====
+
+    # 7) Age group + P2P
+    if "age group" in q and "p2p" in q:
+        data = df[df["transaction_type"] == "P2P"]
+        counts = data["sender_age_group"].value_counts()
+        return _build_fast_response(
+            counts, question,
+            "P2P transfers by age group",
+            f"{counts.idxmax()} has the highest P2P transfers"
+        )
+
+    # 8) Average transaction amount
+    if "average" in q and ("transaction" in q or "amount" in q):
+        avg = round(float(df["amount_inr"].mean()), 2)
+        return _build_fast_response(
+            avg, question,
+            f"₹{avg:,.2f} computed",
+            f"The average transaction amount is ₹{avg:,.2f} across {len(df):,} transactions."
+        )
+
+    # 9) Peak merchant hours
     if "peak" in q and "merchant" in q:
         merchant_hours = df.groupby(["merchant_category", "hour_of_day"]).size().reset_index(name="count")
         peak = merchant_hours.loc[merchant_hours.groupby("merchant_category")["count"].idxmax()]
@@ -305,35 +406,7 @@ def try_fast_query(question, df):
             f"Peak transaction hours vary by merchant category. Based on {len(df):,} transactions."
         )
 
-    # E) Fraud in high-value transactions
-    if any(w in q for w in ["flagged", "fraud"]) and any(w in q for w in ["high-value", "over", "large", "above"]):
-        high_value = df[df["amount_inr"] >= 5000]
-        fraud_pct = round(high_value["fraud_flag"].mean() * 100, 2)
-        return _build_fast_response(
-            fraud_pct, question,
-            f"{fraud_pct}% fraud rate",
-            f"{fraud_pct}% of high-value transactions (≥₹5,000) are flagged. Based on {len(high_value):,} transactions."
-        )
-
-    # F) Top state by transactions
-    if ("top" in q or "highest" in q or "most" in q) and "state" in q:
-        counts = df["sender_state"].value_counts()
-        return _build_fast_response(
-            counts, question,
-            f"{counts.index[0]} leads",
-            f"{counts.index[0]} has the most transactions with {counts.iloc[0]:,} total."
-        )
-
-    # G) Transactions by bank
-    if "bank" in q and any(w in q for w in ["transaction", "volume", "count", "how many", "compare"]):
-        counts = df["sender_bank"].value_counts()
-        return _build_fast_response(
-            counts, question,
-            f"{counts.index[0]} leads by volume",
-            f"{counts.index[0]} leads with {counts.iloc[0]:,} transactions."
-        )
-
-    # H) Success rate
+    # 10) Success rate
     if "success" in q and ("rate" in q or "percent" in q or "%" in q):
         rate = round((df["transaction_status"] == "SUCCESS").sum() / len(df) * 100, 2)
         return _build_fast_response(
@@ -342,7 +415,7 @@ def try_fast_query(question, df):
             f"Overall success rate is {rate}% across {len(df):,} transactions."
         )
 
-    # I) Total transactions
+    # 11) Total transactions
     if "total" in q and ("transaction" in q or "count" in q or "how many" in q):
         total = len(df)
         return _build_fast_response(
@@ -351,7 +424,7 @@ def try_fast_query(question, df):
             f"The dataset contains {total:,} total transactions."
         )
 
-    # J) Weekend analysis
+    # 12) Weekend analysis
     if "weekend" in q and any(w in q for w in ["transaction", "compare", "volume", "how", "what"]):
         weekend = df[df["is_weekend"] == 1]
         weekday = df[df["is_weekend"] == 0]
@@ -362,16 +435,7 @@ def try_fast_query(question, df):
             f"{w_pct}% of transactions occur on weekends ({len(weekend):,}) vs {len(weekday):,} on weekdays."
         )
 
-    # K) Overall fraud rate
-    if any(w in q for w in ["fraud", "flagged"]) and ("rate" in q or "percent" in q or "how" in q or "%" in q):
-        fraud_pct = round(df["fraud_flag"].mean() * 100, 2)
-        return _build_fast_response(
-            fraud_pct, question,
-            f"{fraud_pct}% fraud rate",
-            f"Overall fraud flag rate is {fraud_pct}% across {len(df):,} transactions."
-        )
-
-    # L) Network type breakdown
+    # 13) Network type breakdown
     if "network" in q and any(w in q for w in ["type", "breakdown", "distribution", "compare", "usage"]):
         counts = df["network_type"].value_counts()
         return _build_fast_response(
@@ -380,7 +444,7 @@ def try_fast_query(question, df):
             f"{counts.index[0]} is the most used network with {counts.iloc[0]:,} transactions."
         )
 
-    # M) Transaction type distribution
+    # 14) Transaction type distribution
     if "transaction type" in q and any(w in q for w in ["breakdown", "distribution", "split", "compare", "how"]):
         counts = df["transaction_type"].value_counts()
         return _build_fast_response(
@@ -388,6 +452,28 @@ def try_fast_query(question, df):
             f"{counts.index[0]} leads",
             f"{counts.index[0]} is the most common transaction type with {counts.iloc[0]:,} transactions."
         )
+
+    # ===== BROAD FALLBACKS (guarded) =====
+
+    # 15) Top state — GUARD: skip if fraud/fail keywords present
+    if ("top" in q or "highest" in q or "most" in q) and "state" in q:
+        if not any(w in q for w in ["fraud", "fail", "flagged", "error"]):
+            counts = df["sender_state"].value_counts()
+            return _build_fast_response(
+                counts, question,
+                f"{counts.index[0]} leads",
+                f"{counts.index[0]} has the most transactions with {counts.iloc[0]:,} total."
+            )
+
+    # 16) Bank volume — GUARD: skip if fraud/fail keywords present
+    if "bank" in q and any(w in q for w in ["transaction", "volume", "count", "how many", "compare"]):
+        if not any(w in q for w in ["fraud", "fail", "flagged", "error"]):
+            counts = df["sender_bank"].value_counts()
+            return _build_fast_response(
+                counts, question,
+                f"{counts.index[0]} leads by volume",
+                f"{counts.index[0]} leads with {counts.iloc[0]:,} transactions."
+            )
 
     return None
 
@@ -415,8 +501,61 @@ def set_cached(question, value):
     FAST_CACHE[canonicalize(question)] = value
 
 
+# --- Question Validator ---
+_DATA_KEYWORDS = {
+    "transaction", "amount", "bank", "state", "fraud", "device", "network",
+    "age", "group", "p2p", "p2m", "upi", "payment", "recharge", "bill",
+    "success", "fail", "rate", "average", "mean", "total", "count",
+    "compare", "top", "highest", "lowest", "most", "least", "peak",
+    "hour", "day", "weekend", "merchant", "category", "trend", "distribution",
+    "breakdown", "percentage", "how", "what", "which", "show", "list",
+    "many", "much", "volume", "status", "sender", "receiver", "flagged",
+    "android", "ios", "web", "wifi", "scatter", "chart", "plot",
+    "income", "spending", "transfer", "value", "number", "ratio",
+    "expensive", "cheap", "rich", "poor", "high", "low", "over", "under",
+    "between", "across", "per", "each", "every", "monthly", "daily",
+    "weekly", "type", "kind", "sort", "rank", "order", "sum", "median",
+    "max", "min", "quartile", "analyze", "analyse", "insight", "pattern",
+    "correlation", "split", "segment", "filter", "anomaly", "detect",
+}
+
+
+def validate_question(question):
+    """Validate that a question is worth sending to the LLM.
+    Returns (is_valid, error_message)."""
+    q = question.strip()
+
+    # Too short
+    if len(q) < 10 or len(q.split()) < 3:
+        return False, "Please ask a complete question about UPI transaction data (e.g. 'What is the average transaction amount?')."
+
+    # Must contain at least one data-related keyword
+    words = set(q.lower().split())
+    # Also check substrings for compound words
+    has_keyword = any(kw in q.lower() for kw in _DATA_KEYWORDS)
+    if not has_keyword:
+        return False, "That doesn't look like a data question. Try asking about transactions, banks, fraud rates, age groups, states, or device types."
+
+    return True, ""
+
+
 def get_full_answer(user_question, chat_history=None):
     start = time.time()
+
+    # Validate question before wasting an API call
+    is_valid, error_msg = validate_question(user_question)
+    if not is_valid:
+        print(f"Question rejected: '{user_question}' — {error_msg}")
+        return {
+            "answer": error_msg,
+            "headline": "INVALID QUERY",
+            "stats": [],
+            "data": None,
+            "code": None,
+            "chart": None,
+            "followups": ["What is the average transaction amount?", "Show fraud rate by bank", "Compare device types"],
+            "verification": {"rows_used": 0, "status": "rejected", "error": "Question validation failed"}
+        }
 
     # Check result cache first
     cached = get_cached(user_question)
@@ -488,6 +627,11 @@ def get_full_answer(user_question, chat_history=None):
         }
 
     verification = verify_result(df, result)
+
+    # Sort Series descending so chart, headline, and stats all agree
+    if isinstance(result, pd.Series) and len(result) > 0:
+        result = result.sort_values(ascending=False)
+
     chart = generate_chart(result, user_question)
     followups = generate_followup_questions(user_question, result)
     headline, insight = generate_insight(user_question, result)

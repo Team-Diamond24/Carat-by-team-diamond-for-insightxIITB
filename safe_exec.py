@@ -106,28 +106,22 @@ def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
 
 
 def _handle_mean(plan: Dict[str, Any], df: pd.DataFrame) -> float:
-    """
-    Compute the mean of a single column.
-
-    Plan keys:
-        column (str): Column name to compute the mean of.
-
-    Returns:
-        float — the arithmetic mean of the column.
-
-    Example plan:
-        {
-            "operation": "mean",
-            "column": "amount_inr"
-        }
-    """
+    """Compute the mean of a single column."""
     column = plan["column"]
-
     if column not in df.columns:
-        raise ValueError(f"Column '{column}' not found in dataframe. "
-                         f"Available columns: {list(df.columns)}")
-
+        raise ValueError(f"Column '{column}' not found. Available: {list(df.columns)}")
     return float(df[column].mean())
+
+
+def _handle_single_agg(func_name: str):
+    """Factory for single-column aggregation handlers (sum, count, max, min, etc.)."""
+    def handler(plan: Dict[str, Any], df: pd.DataFrame):
+        column = plan["column"]
+        if column not in df.columns:
+            raise ValueError(f"Column '{column}' not found. Available: {list(df.columns)}")
+        return getattr(df[column], func_name)()
+    handler.__doc__ = f"Compute {func_name} of a single column."
+    return handler
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +132,14 @@ _OPERATION_HANDLERS = {
     "filter":  _handle_filter,
     "groupby": _handle_groupby,
     "mean":    _handle_mean,
+    "sum":     _handle_single_agg("sum"),
+    "count":   _handle_single_agg("count"),
+    "max":     _handle_single_agg("max"),
+    "min":     _handle_single_agg("min"),
+    "median":  _handle_single_agg("median"),
+    "std":     _handle_single_agg("std"),
+    "var":     _handle_single_agg("var"),
+    "nunique": _handle_single_agg("nunique"),
 }
 
 
