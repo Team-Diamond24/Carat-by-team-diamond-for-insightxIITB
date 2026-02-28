@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Carat by Diamond | Analyst Terminal</title>
-    
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+        rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -42,45 +45,143 @@
             scrollbar-width: thin;
             scrollbar-color: #b1b2ff #eef1ff;
         }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #eef1ff; }
-        ::-webkit-scrollbar-thumb { background-color: #b1b2ff; }
-        .sharp-corners { border-radius: 0px !important; }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #eef1ff;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: #b1b2ff;
+        }
+
+        .sharp-corners {
+            border-radius: 0px !important;
+        }
+
         .diamond-icon {
             width: 14px;
             height: 14px;
             background-color: #b1b2ff;
             transform: rotate(45deg);
         }
+
         @keyframes pulse-dot {
-            0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
-            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
         }
-        .status-pulse { animation: pulse-dot 2s infinite; }
-        .query-chip:hover { background-color: #d2daff; border-color: #b1b2ff; }
+
+        .status-pulse {
+            animation: pulse-dot 2s infinite;
+        }
+
+        .query-chip:hover {
+            background-color: #d2daff;
+            border-color: #b1b2ff;
+        }
 
         @keyframes fadeSlideIn {
-            from { opacity: 0; transform: translateY(16px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-        .fade-in { animation: fadeSlideIn 0.35s ease-out forwards; }
+
+        .fade-in {
+            animation: fadeSlideIn 0.35s ease-out forwards;
+        }
 
         @keyframes typingPulse {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 1; }
+
+            0%,
+            100% {
+                opacity: 0.3;
+            }
+
+            50% {
+                opacity: 1;
+            }
         }
+
         .typing-dot {
             display: inline-block;
-            width: 6px; height: 6px;
+            width: 6px;
+            height: 6px;
             background: #3730a3;
             border-radius: 50%;
             animation: typingPulse 1.2s infinite;
         }
-        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        /* Mode toggle */
+        .mode-toggle {
+            display: flex;
+            border: 2px solid #b1b2ff;
+            overflow: hidden;
+        }
+
+        .mode-btn {
+            padding: 4px 14px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: none;
+            background: transparent;
+            color: #6366f1;
+        }
+
+        .mode-btn.active {
+            background: #b1b2ff;
+            color: #1a1b41;
+        }
+
+        .mode-btn:not(.active):hover {
+            background: #d2daff;
+        }
+
+        .sql-block {
+            background: #1a1b41;
+            color: #b1b2ff;
+            padding: 12px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-left: 4px solid #b1b2ff;
+        }
     </style>
 </head>
+
 <body class="h-screen w-screen overflow-hidden flex">
 
     <!-- SIDEBAR -->
@@ -94,55 +195,83 @@
         </div>
 
         <nav class="flex flex-col border-b-2 border-accent py-2">
-            <a href="#" class="px-6 py-3 border-l-4 border-accent bg-bg/60 text-text-primary font-bold text-sm tracking-wide">Dashboard</a>
-            <a href="#" class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Insights</a>
-            <a href="#" class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Reports</a>
+            <a href="#"
+                class="px-6 py-3 border-l-4 border-accent bg-bg/60 text-text-primary font-bold text-sm tracking-wide">Dashboard</a>
+            <a href="#"
+                class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Insights</a>
+            <a href="#"
+                class="px-6 py-3 border-l-4 border-transparent text-text-secondary hover:bg-bg/30 font-medium text-sm tracking-wide transition-colors">Reports</a>
         </nav>
 
         <div class="p-6 flex-1 overflow-y-auto">
             <h3 class="text-xs font-bold text-text-secondary uppercase tracking-widest mb-4">Quick Queries</h3>
             <div class="flex flex-col gap-3" id="quick-queries">
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which bank fails most?">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="which bank fails most?">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">which bank fails most?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">which
+                        bank fails most?</span>
                 </div>
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="what are peak transaction hours?">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="what are peak transaction hours?">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">peak transaction hours?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">peak
+                        transaction hours?</span>
                 </div>
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="show fraud flag patterns">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="show fraud flag patterns">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">fraud flag patterns?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">fraud
+                        flag patterns?</span>
                 </div>
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which states send the most transactions?">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="which states send the most transactions?">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">top performing states?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">top
+                        performing states?</span>
                 </div>
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="compare weekend vs weekday transaction trends">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="compare weekend vs weekday transaction trends">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">weekend vs weekday trends?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">weekend
+                        vs weekday trends?</span>
                 </div>
-                <div class="example-question cursor-pointer flex items-start gap-2 group" data-q="which age group does the most P2P transfers?">
+                <div class="example-question cursor-pointer flex items-start gap-2 group"
+                    data-q="which age group does the most P2P transfers?">
                     <span class="text-text-secondary font-mono font-bold group-hover:text-text-primary">></span>
-                    <span class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">age group breakdown?</span>
+                    <span
+                        class="text-text-secondary text-sm font-mono group-hover:text-text-primary transition-colors leading-tight">age
+                        group breakdown?</span>
                 </div>
             </div>
         </div>
 
         <div class="h-12 border-t-2 border-accent bg-surface flex items-center px-4 gap-3 shrink-0">
             <div class="w-2 h-2 bg-success rounded-full status-pulse"></div>
-            <span class="text-xxs font-mono text-text-muted font-bold tracking-wide uppercase">250,000 transactions loaded</span>
+            <span class="text-xxs font-mono text-text-muted font-bold tracking-wide uppercase">250,000 transactions
+                loaded</span>
         </div>
     </aside>
 
     <!-- MAIN -->
     <main class="flex-1 flex flex-col min-w-0 bg-bg relative">
-        
+
         <header class="h-14 bg-surface border-b-2 border-accent flex items-center justify-between px-6 shrink-0 z-10">
             <h1 class="text-xs font-bold text-text-primary uppercase tracking-widest">Analysis Terminal</h1>
-            <div class="flex items-center gap-2 border-2 border-accent bg-bg px-3 py-1">
-                <div class="w-1.5 h-1.5 bg-success rounded-full status-pulse"></div>
-                <span class="text-xs font-bold text-success uppercase tracking-widest">Live</span>
+            <div class="flex items-center gap-4">
+                <div class="mode-toggle" id="mode-toggle">
+                    <button class="mode-btn active" data-mode="pandas" onclick="setMode('pandas')">Pandas</button>
+                    <button class="mode-btn" data-mode="sql" onclick="setMode('sql')">SQL</button>
+                </div>
+                <div class="flex items-center gap-2 border-2 border-accent bg-bg px-3 py-1">
+                    <div class="w-1.5 h-1.5 bg-success rounded-full status-pulse"></div>
+                    <span class="text-xs font-bold text-success uppercase tracking-widest">Live</span>
+                </div>
             </div>
         </header>
 
@@ -175,29 +304,28 @@
 
         <!-- INPUT BAR -->
         <div class="absolute bottom-0 w-full bg-surface border-t-2 border-accent p-6 shadow-lg">
-            <div class="flex items-center bg-bg border-2 border-accent p-1 focus-within:border-text-primary transition-colors">
+            <div
+                class="flex items-center bg-bg border-2 border-accent p-1 focus-within:border-text-primary transition-colors">
                 <span class="text-text-muted font-mono font-bold px-4">></span>
-                <input
-                    type="text"
-                    id="chat-input"
-                    placeholder="enter query..."
+                <input type="text" id="chat-input" placeholder="enter query..."
                     class="flex-1 bg-transparent outline-none font-mono text-text-primary font-bold placeholder:text-text-secondary/50"
-                    autocomplete="off"
-                    onkeydown="if(event.key==='Enter') sendMessage()"
-                >
-                <button
-                    id="send-btn"
-                    onclick="sendMessage()"
-                    class="bg-accent hover:bg-text-primary hover:text-bg text-text-primary font-mono font-bold px-8 py-3 uppercase tracking-wider transition-colors sharp-corners"
-                >
+                    autocomplete="off" onkeydown="if(event.key==='Enter') sendMessage()">
+                <button id="send-btn" onclick="sendMessage()"
+                    class="bg-accent hover:bg-text-primary hover:text-bg text-text-primary font-mono font-bold px-8 py-3 uppercase tracking-wider transition-colors sharp-corners">
                     Execute
                 </button>
             </div>
             <div class="flex items-center gap-4 mt-4 px-2">
                 <span class="text-xxs font-bold text-text-muted uppercase tracking-widest">Suggested:</span>
-                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="show anomaly patterns in fraud flags">> anomaly detection</span>
-                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="which merchant categories have highest transaction volume">> top merchants by volume</span>
-                <span class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors" data-q="which states have the highest failure rates">> regional risk breakdown</span>
+                <span
+                    class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors"
+                    data-q="show anomaly patterns in fraud flags">> anomaly detection</span>
+                <span
+                    class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors"
+                    data-q="which merchant categories have highest transaction volume">> top merchants by volume</span>
+                <span
+                    class="example-question cursor-pointer text-xs font-mono font-bold text-text-secondary hover:text-text-primary transition-colors"
+                    data-q="which states have the highest failure rates">> regional risk breakdown</span>
             </div>
         </div>
     </main>
@@ -205,6 +333,16 @@
     <script>
         let chatHistory = [];
         let chartCounter = 0;
+        let currentMode = 'pandas'; // 'pandas' or 'sql'
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
+            });
+            const input = document.getElementById('chat-input');
+            input.placeholder = mode === 'sql' ? 'ask in SQL mode...' : 'enter query...';
+        }
 
         // Load real KPI stats
         async function loadStats() {
@@ -294,7 +432,7 @@
             }
 
             const now = new Date();
-            const timestamp = "T+" + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":" + String(now.getSeconds()).padStart(2,"0");
+            const timestamp = "T+" + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":" + String(now.getSeconds()).padStart(2, "0");
 
             const card = document.createElement("div");
             card.className = "w-full flex flex-col gap-3 fade-in";
@@ -353,6 +491,89 @@
             scrollToBottom();
         }
 
+        // SQL mode response card
+        function addSqlResponseCard(data) {
+            const container = document.getElementById("messages-container");
+            const chartId = "chart-" + (chartCounter++);
+
+            const now = new Date();
+            const timestamp = "T+" + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":" + String(now.getSeconds()).padStart(2, "0");
+
+            const sqlHTML = data.sql
+                ? `<details open class="mt-2 mb-3">
+                    <summary class="text-xxs font-bold text-text-muted uppercase tracking-widest cursor-pointer mb-2">Generated SQL</summary>
+                    <div class="sql-block sharp-corners">${data.sql}</div>
+                   </details>`
+                : '';
+
+            const chartHTML = data.chart
+                ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:260px;"></div>`
+                : '';
+
+            let resultHTML = '';
+            if (data.result && !data.error) {
+                const resultStr = String(data.result);
+                if (resultStr.length < 300) {
+                    resultHTML = `<details class="mt-2">
+                        <summary class="text-xxs font-bold text-text-muted uppercase tracking-widest cursor-pointer">Query Results</summary>
+                        <pre class="border-2 border-accent bg-bg p-3 mt-2 text-xs font-mono text-text-secondary overflow-x-auto max-h-48 sharp-corners">${resultStr}</pre>
+                    </details>`;
+                } else {
+                    resultHTML = `<details class="mt-2">
+                        <summary class="text-xxs font-bold text-text-muted uppercase tracking-widest cursor-pointer">Query Results (${data.rows_returned || '?'} rows)</summary>
+                        <pre class="border-2 border-accent bg-bg p-3 mt-2 text-xs font-mono text-text-secondary overflow-x-auto max-h-48 sharp-corners">${resultStr}</pre>
+                    </details>`;
+                }
+            }
+
+            const metaHTML = data.time_seconds
+                ? `<div class="flex gap-4 mt-3">
+                    <span class="border-2 border-accent bg-bg px-3 py-1 text-xs font-mono font-bold text-text-muted sharp-corners">MODE: SQL</span>
+                    <span class="border-2 border-accent bg-bg px-3 py-1 text-xs font-mono font-bold text-text-muted sharp-corners">${data.rows_returned || 0} ROWS</span>
+                    <span class="border-2 border-accent bg-bg px-3 py-1 text-xs font-mono font-bold text-text-muted sharp-corners">${data.time_seconds}s</span>
+                   </div>`
+                : '';
+
+            const card = document.createElement("div");
+            card.className = "w-full flex flex-col gap-3 fade-in";
+            card.innerHTML = `
+                <div class="bg-surface border-t-4 border-accent p-6 shadow-[6px_6px_0px_0px_rgba(177,178,255,1)] flex flex-col sharp-corners border-x-2 border-b-2">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-3">
+                            <span class="bg-text-primary text-bg text-xxs font-mono font-bold px-2 py-0.5 uppercase tracking-widest">SQL</span>
+                            <h2 class="text-xl font-black text-text-primary uppercase tracking-tight">ANALYSIS COMPLETE</h2>
+                        </div>
+                        <span class="text-xs font-mono text-text-muted font-bold">${timestamp}</span>
+                    </div>
+                    ${sqlHTML}
+                    <div class="text-text-secondary font-medium text-base mb-2 pb-4 border-b-2 border-accent/30">
+                        ${data.summary || data.error || 'No summary available.'}
+                    </div>
+                    ${chartHTML}
+                    ${resultHTML}
+                    ${metaHTML}
+                </div>
+            `;
+
+            container.appendChild(card);
+
+            if (data.chart) {
+                setTimeout(() => {
+                    try {
+                        Plotly.newPlot(chartId, data.chart.data, {
+                            ...data.chart.layout,
+                            paper_bgcolor: "rgba(0,0,0,0)",
+                            plot_bgcolor: "rgba(0,0,0,0)",
+                            font: { color: "#3730a3", family: "JetBrains Mono" },
+                            margin: { t: 20, r: 20, b: 40, l: 120 }
+                        }, { responsive: true, displayModeBar: false });
+                    } catch (e) { console.log("SQL chart error", e); }
+                }, 100);
+            }
+
+            scrollToBottom();
+        }
+
         async function submitQuery(question) {
             if (!question.trim()) return;
 
@@ -364,11 +585,12 @@
             addUserQuery(question);
             addTypingIndicator();
 
+            const endpoint = currentMode === 'sql' ? '/sql-ask' : '/ask';
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 45000);
+            const timeoutId = setTimeout(() => controller.abort(), 60000);
 
             try {
-                const res = await fetch("/ask", {
+                const res = await fetch(endpoint, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ question, history: chatHistory }),
@@ -377,25 +599,37 @@
                 clearTimeout(timeoutId);
                 const data = await res.json();
                 removeTypingIndicator();
-                addResponseCard(data);
 
-                chatHistory.push({ role: "user", content: question });
-                chatHistory.push({ role: "assistant", content: data.answer });
+                if (currentMode === 'sql') {
+                    addSqlResponseCard(data);
+                    chatHistory.push({ role: "user", content: question });
+                    chatHistory.push({ role: "assistant", content: data.summary || '' });
+                } else {
+                    addResponseCard(data);
+                    chatHistory.push({ role: "user", content: question });
+                    chatHistory.push({ role: "assistant", content: data.answer });
+                }
                 if (chatHistory.length > 10) chatHistory = chatHistory.slice(-10);
 
             } catch (e) {
                 clearTimeout(timeoutId);
                 removeTypingIndicator();
                 const isTimeout = e.name === "AbortError";
-                addResponseCard({
-                    answer: isTimeout
-                        ? "Request timed out after 45 seconds. The server may be overloaded. Try rephrasing your query."
-                        : "Connection error. Please check the server is running.",
-                    headline: isTimeout ? "TIMEOUT" : "ERROR",
-                    stats: [],
-                    chart: null,
-                    followups: []
-                });
+                if (currentMode === 'sql') {
+                    addSqlResponseCard({
+                        sql: null, result: null, chart: null,
+                        summary: isTimeout ? 'Request timed out. Try a simpler query.' : 'Connection error. Check if server is running.',
+                        error: isTimeout ? 'timeout' : 'connection_error'
+                    });
+                } else {
+                    addResponseCard({
+                        answer: isTimeout
+                            ? "Request timed out after 45 seconds. The server may be overloaded. Try rephrasing your query."
+                            : "Connection error. Please check the server is running.",
+                        headline: isTimeout ? "TIMEOUT" : "ERROR",
+                        stats: [], chart: null, followups: []
+                    });
+                }
             }
 
             input.disabled = false;
@@ -424,4 +658,5 @@
         loadStats();
     </script>
 </body>
+
 </html>

@@ -1,9 +1,11 @@
 import pandas as pd
 from openai import OpenAI
 import time
+import math
 import plotly.express as px
 import plotly.utils
 import json
+import difflib
 from planner import code_to_plan
 from safe_exec import execute_plan
 from verify import verify_result
@@ -44,7 +46,7 @@ def call_ai(prompt):
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
-                model="deepseek/deepseek-chat",
+                model="openai/gpt-oss-120b:free",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1024
             )
@@ -58,6 +60,108 @@ def call_ai(prompt):
                 print(f"AI call error: {str(e)}")
                 return "Error: " + str(e)
     return "Error: Too many retries"
+
+
+def resolve_entities(question, df):
+    """Fuzzy-match user words against actual data values.
+    Returns (corrected_question, corrections_made, suggestions).
+    """
+    import re
+    print(f"[RESOLVE] Starting entity resolution for: '{question}'")
+    corrections = []
+    suggestions = []
+
+    # Hardcoded alias map for common alternate names / misspellings
+    ALIASES = {
+        "orrisa": "Odisha", "orissa": "Odisha", "odisa": "Odisha",
+        "maharastra": "Maharashtra", "mahrashtra": "Maharashtra",
+        "karnatak": "Karnataka", "banglore": "Karnataka",
+        "tamilnadu": "Tamil Nadu",
+        "uttarpradesh": "Uttar Pradesh",
+        "andhrapradesh": "Andhra Pradesh",
+        "westbengal": "West Bengal",
+        "madhyapradesh": "Madhya Pradesh",
+        "himachalpradesh": "Himachal Pradesh",
+        "bombay": "Maharashtra", "mumbai": "Maharashtra",
+        "chennai": "Tamil Nadu", "hyderabad": "Telangana",
+        "kolkata": "West Bengal", "pune": "Maharashtra",
+        "sbi": "SBI", "hdfc": "HDFC", "icici": "ICICI",
+        "paytm": "Paytm", "gpay": "GPay", "phonepe": "PhonePe",
+    }
+
+    # Step 1: Check aliases first (instant match)
+    q_lower = question.lower()
+    q_words = q_lower.split()
+    for alias, real_name in ALIASES.items():
+        if alias in q_words or alias in q_lower:
+            # Verify this value actually exists in the data
+            exists_in_data = False
+            for col in df.columns:
+                if df[col].dtype == "object" and real_name in df[col].values:
+                    exists_in_data = True
+                    break
+            if exists_in_data and real_name.lower() not in q_lower:
+                pattern = re.compile(re.escape(alias), re.IGNORECASE)
+                new_question = pattern.sub(real_name, question)
+                if new_question != question:
+                    corrections.append((alias, real_name))
+                    question = new_question
+                    q_lower = question.lower()
+                    print(f"[RESOLVE] Alias match: '{alias}' -> '{real_name}'")
+
+    # Step 2: Fuzzy-match against key categorical columns only
+    # Skip columns with too many unique values (transaction_id, names, etc.)
+    MATCH_COLUMNS = [col for col in df.columns
+                     if df[col].dtype == "object" and df[col].nunique() <= 30]
+    print(f"[RESOLVE] Fuzzy matching against columns: {MATCH_COLUMNS}")
+
+    # Build pool of all known values from these columns
+    all_known = {}
+    for col in MATCH_COLUMNS:
+        for val in df[col].dropna().unique():
+            vl = str(val).lower()
+            if len(vl) >= 3:
+                all_known[vl] = (str(val), col)
+
+    # Extract candidate words from question
+    words = question.split()
+    candidates = [w.lower().strip('?,.!') for w in words if len(w) >= 3]
+    for i in range(len(words) - 1):
+        bigram = words[i].lower().strip('?,.!') + " " + words[i+1].lower().strip('?,.!')
+        candidates.append(bigram)
+
+    q_lower = question.lower()
+    known_keys = list(all_known.keys())
+
+    for candidate in candidates:
+        # Skip if candidate is already an exact match
+        if candidate in all_known:
+            continue
+
+        close = difflib.get_close_matches(candidate, known_keys, n=1, cutoff=0.5)
+        if close:
+            matched_key = close[0]
+            real_value, col_name = all_known[matched_key]
+            ratio = difflib.SequenceMatcher(None, candidate, matched_key).ratio()
+
+            if real_value.lower() in q_lower:
+                continue
+
+            if ratio >= 0.6:
+                pattern = re.compile(re.escape(candidate), re.IGNORECASE)
+                new_question = pattern.sub(real_value, question)
+                if new_question != question:
+                    corrections.append((candidate, real_value))
+                    question = new_question
+                    q_lower = question.lower()
+                    print(f"[RESOLVE] Fuzzy corrected '{candidate}' -> '{real_value}' ({col_name}, ratio={ratio:.2f})")
+            elif ratio >= 0.5:
+                suggestions.append(f"Did you mean '{real_value}'?")
+                print(f"[RESOLVE] Suggestion: '{candidate}' ~ '{real_value}' ({col_name}, ratio={ratio:.2f})")
+
+    suggestions = list(dict.fromkeys(suggestions))
+    print(f"[RESOLVE] Final: corrections={corrections} | suggestions={suggestions}")
+    return question, corrections, suggestions
 
 
 def ask_question(user_question, chat_history=None):
@@ -74,35 +178,39 @@ def ask_question(user_question, chat_history=None):
     col_list = ", ".join(df.columns.tolist())
     row_count = len(df)
 
-    # Build sample values for key categorical columns
+    # Build sample values for ALL categorical columns (show ALL unique values)
     value_hints = []
     for col in df.columns:
-        if df[col].dtype == "object" and df[col].nunique() <= 15:
-            vals = ", ".join(str(v) for v in df[col].unique()[:10])
-            value_hints.append(f"{col} ({vals})")
+        if df[col].dtype == "object":
+            unique_vals = sorted(df[col].dropna().unique().tolist())
+            vals = ", ".join(str(v) for v in unique_vals)
+            value_hints.append(f"{col}: EXACT values = [{vals}]")
         elif col in ("fraud_flag", "is_weekend"):
-            value_hints.append(f"{col} (0 or 1)")
+            value_hints.append(f"{col}: values = [0, 1]")
         elif col in ("hour_of_day",):
-            value_hints.append(f"{col} (0-23)")
+            value_hints.append(f"{col}: integer 0-23")
         elif col in ("amount_inr",):
-            value_hints.append(f"{col} (numeric, INR)")
+            value_hints.append(f"{col}: numeric (INR)")
         else:
-            value_hints.append(col)
+            value_hints.append(f"{col}: numeric")
     col_detail = "\n".join(value_hints)
 
     prompt = (
         f"You are a data analyst. You have a pandas dataframe called 'df' with {row_count:,} UPI transactions.\n\n"
-        f"DataFrame df columns and values:\n{col_detail}\n\n"
+        f"DataFrame columns and their EXACT allowed values:\n{col_detail}\n\n"
         + history_context +
-        "Write ONLY executable pandas code to answer this question.\n"
-        "Store the final answer in a variable called 'result'.\n"
-        "If result is a comparison or ranking, store as a pandas Series with named index.\n"
-        "Do not include any imports. Do not use print(). No markdown. No explanation.\n"
-        "Just raw Python code that can be executed with exec().\n\n"
+        "RULES:\n"
+        "1. Write ONLY executable pandas code. Store the final answer in a variable called 'result'.\n"
+        "2. If comparing or ranking, store as a pandas Series with named index.\n"
+        "3. CRITICAL: Use ONLY the EXACT column values listed above. The user's question has already been spell-corrected, so use the values as-is.\n"
+        "4. ALWAYS try to answer. Even if the question is vague, make your best interpretation using the available columns.\n"
+        "5. For rates/percentages, calculate them properly (e.g. failed_count / total_count * 100).\n"
+        "6. No imports, no print(), no markdown, no explanation. Just raw Python code.\n\n"
         "Question: " + user_question
     )
+    print(f"[LLM] Sending prompt ({len(prompt)} chars) to AI")
     raw = call_ai(prompt)
-    print("Raw AI code response:", raw)
+    print(f"[LLM] Raw AI code response: {raw}")
     return raw
 
 
@@ -117,35 +225,61 @@ def clean_code(raw_code):
 def generate_chart(result, user_question):
     try:
         if result is None:
+            print("[CHART] result is None, skipping chart")
             return None
 
         # --- Handle dict → convert to Series first ---
         if isinstance(result, dict):
             result = pd.Series(result)
+            print(f"[CHART] Converted dict to Series: {result.to_dict()}")
 
         # --- Handle pd.Series → bar chart directly ---
         if isinstance(result, pd.Series):
-            chart_df = result.reset_index()
-            chart_df.columns = ["Category", "Value"]
+            if len(result) == 0:
+                print("[CHART] Empty Series, skipping chart")
+                return None
+
+            print(f"[CHART] Series input — name={result.name}, index_name={result.index.name}")
+            print(f"[CHART] Series dtype={result.dtype}, length={len(result)}")
+            print(f"[CHART] Series head: {dict(list(result.head().items()))}")
+
+            # Build chart DataFrame manually to avoid reset_index column ambiguity
+            categories = [str(x) for x in result.index.tolist()]
+            values = result.values.tolist()
+
+            chart_df = pd.DataFrame({
+                "Category": categories,
+                "Value": [float(v) for v in values]
+            })
+
             x_label = result.index.name or "Category"
             y_label = result.name or "Value"
 
-            chart_df = chart_df.sort_values("Value", ascending=False)
-            chart_df["Category"] = chart_df["Category"].astype(str)
+            # Sort ASCENDING so the highest value ends up at the TOP of the
+            # horizontal bar chart (Plotly renders bottom → top by default)
+            chart_df = chart_df.sort_values("Value", ascending=True)
+
+            print(f"[CHART] chart_df after sort (ascending for Plotly):")
+            print(f"[CHART]   Categories: {chart_df['Category'].tolist()}")
+            print(f"[CHART]   Values: {chart_df['Value'].tolist()}")
+
             fig = px.bar(
                 chart_df, x="Value", y="Category",
                 title=f"{y_label} by {x_label}", orientation="h",
                 labels={"Category": x_label, "Value": y_label},
                 color_discrete_sequence=["#b1b2ff"]
             )
-            fig.update_layout(yaxis=dict(autorange="reversed"))
+            # Do NOT use autorange="reversed" — the ascending sort already
+            # puts the highest-value bar at the top in Plotly's layout
 
         # --- Handle pd.DataFrame ---
         elif isinstance(result, pd.DataFrame) and len(result) > 0:
+            print(f"[CHART] DataFrame input — shape={result.shape}, columns={result.columns.tolist()}")
             numeric_cols = result.select_dtypes(include="number").columns.tolist()
             non_numeric_cols = result.select_dtypes(exclude="number").columns.tolist()
+            print(f"[CHART] numeric_cols={numeric_cols}, non_numeric_cols={non_numeric_cols}")
 
-            # 4. Two numeric columns → scatter
+            # Two numeric columns → scatter
             if len(numeric_cols) >= 2:
                 x_col, y_col = numeric_cols[0], numeric_cols[1]
                 fig = px.scatter(
@@ -155,7 +289,7 @@ def generate_chart(result, user_question):
                     color_discrete_sequence=["#b1b2ff"]
                 )
 
-            # 5. One numeric column only → histogram
+            # One numeric column only → histogram
             elif len(numeric_cols) == 1:
                 col = numeric_cols[0]
                 fig = px.histogram(
@@ -165,7 +299,7 @@ def generate_chart(result, user_question):
                     color_discrete_sequence=["#b1b2ff"]
                 )
 
-            # 6. One categorical + one numeric → bar
+            # One categorical + one numeric → bar
             elif len(non_numeric_cols) >= 1 and len(numeric_cols) >= 1:
                 fig = px.bar(
                     result, x=non_numeric_cols[0], y=numeric_cols[0],
@@ -174,8 +308,10 @@ def generate_chart(result, user_question):
                     color_discrete_sequence=["#b1b2ff"]
                 )
             else:
+                print("[CHART] No suitable columns for chart")
                 return None
         else:
+            print(f"[CHART] Unsupported result type: {type(result).__name__}")
             return None
 
         # Common layout
@@ -187,10 +323,14 @@ def generate_chart(result, user_question):
             margin=dict(t=30, r=20, b=40, l=120)
         )
 
-        return json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig))
+        chart_json = json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig))
+        print(f"[CHART] Chart generated successfully, {len(chart_json.get('data', []))} traces")
+        return chart_json
 
     except Exception as e:
-        print(f"Chart generation error: {e}")
+        print(f"[CHART] Chart generation error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -279,6 +419,15 @@ def generate_insight(user_question, result):
 
 def _build_fast_response(result, question, headline, insight):
     """Helper to build a standard response dict from a fast-path result."""
+    print(f"[FAST PATH] Building response for: '{question}'")
+    print(f"[FAST PATH] Result type: {type(result).__name__}")
+    if isinstance(result, pd.Series):
+        print(f"[FAST PATH] Series — length={len(result)}, dtype={result.dtype}, name={result.name}")
+        if len(result) > 0:
+            print(f"[FAST PATH] Series top 5: {dict(list(result.head().items()))}")
+    elif isinstance(result, (int, float)):
+        print(f"[FAST PATH] Scalar value: {result}")
+
     chart = generate_chart(result, question)
     verification = verify_result(df, result)
     followups = generate_followup_questions(question, result)
@@ -291,6 +440,11 @@ def _build_fast_response(result, question, headline, insight):
         ]
     elif result is not None and not isinstance(result, pd.Series):
         stats = [{"label": "RESULT", "value": str(result)}]
+    
+    print(f"[FAST PATH] Headline: {headline}")
+    print(f"[FAST PATH] Chart generated: {chart is not None}")
+    print(f"[FAST PATH] Stats: {stats}")
+    
     return {
         "answer": insight,
         "headline": headline,
@@ -541,66 +695,82 @@ def validate_question(question):
 
 def get_full_answer(user_question, chat_history=None):
     start = time.time()
+    print(f"\n{'='*60}")
+    print(f"[PIPELINE] New query: '{user_question}'")
+    print(f"[PIPELINE] Chat history length: {len(chat_history) if chat_history else 0}")
 
-    # Validate question before wasting an API call
-    is_valid, error_msg = validate_question(user_question)
-    if not is_valid:
-        print(f"Question rejected: '{user_question}' — {error_msg}")
+    # Only reject extremely short/empty queries
+    if len(user_question.strip()) < 5:
         return {
-            "answer": error_msg,
-            "headline": "INVALID QUERY",
+            "answer": "Please type a more complete question.",
+            "headline": "TOO SHORT",
             "stats": [],
             "data": None,
             "code": None,
             "chart": None,
-            "followups": ["What is the average transaction amount?", "Show fraud rate by bank", "Compare device types"],
-            "verification": {"rows_used": 0, "status": "rejected", "error": "Question validation failed"}
+            "followups": ["What is the average transaction amount?", "Show fraud rate by bank", "Which state has the most transactions?"],
+            "verification": {"rows_used": 0, "status": "rejected", "error": "Question too short"}
         }
 
-    # Check result cache first
+    # --- STEP 1: Fuzzy-match and auto-correct entity names ---
+    resolved_question, corrections, suggestions = resolve_entities(user_question, df)
+    if corrections:
+        correction_note = "Auto-corrected: " + ", ".join(f"'{orig}' → '{fixed}'" for orig, fixed in corrections)
+        print(f"[PIPELINE] {correction_note}")
+        print(f"[PIPELINE] Resolved question: '{resolved_question}'")
+    else:
+        print(f"[PIPELINE] No entity corrections needed")
+
+    # Check result cache (use original question as key)
     cached = get_cached(user_question)
     if cached is not None:
-        print("Result cache hit for:", user_question)
-        print("Query time:", time.time() - start)
+        print(f"[PIPELINE] CACHE HIT — returning cached result")
+        print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
         return cached
 
-    # Try deterministic fast path
-    fast = try_fast_query(user_question, df)
+    # Try deterministic fast path (use RESOLVED question)
+    print(f"[PIPELINE] Trying fast path...")
+    fast = try_fast_query(resolved_question, df)
     if fast is not None:
+        # If corrections were made, note them in the answer
+        if corrections:
+            correction_note = " (Auto-corrected: " + ", ".join(f"'{orig}' → '{fixed}'" for orig, fixed in corrections) + ")"
+            fast["answer"] = fast["answer"] + correction_note
         set_cached(user_question, fast)
-        print("Query time:", time.time() - start)
+        print(f"[PIPELINE] FAST PATH matched — query time: {time.time() - start:.2f}s")
         return fast
+    print(f"[PIPELINE] No fast path match, using LLM...")
 
-    # LLM path
-    raw_code = ask_question(user_question, chat_history)
+    # LLM path — use RESOLVED question
+    raw_code = ask_question(resolved_question, chat_history)
     code = clean_code(raw_code)
-    print("Cleaned code to execute:", code)
+    print(f"[LLM] Generated code:\n{code}")
 
     try:
         plan = code_to_plan(code)
-        print("Parsed plan:", plan)
+        print(f"[LLM] Parsed plan: {plan}")
         result = execute_plan(plan, df)
-        print("Safe exec result:", type(result).__name__)
+        print(f"[LLM] Safe exec result type: {type(result).__name__}")
 
         # Validate: if planner returned a raw DataFrame, it likely missed
         # the aggregation. Fall through to exec for:
         #   - empty DataFrame (0 rows = bad filter value)
         #   - large DataFrame (>1000 rows = missed aggregation)
         if isinstance(result, pd.DataFrame) and (len(result) == 0 or len(result) > 1000):
-            print(f"Planner returned DataFrame with {len(result)} rows, likely incomplete parse")
+            print(f"[LLM] Planner returned DataFrame with {len(result)} rows, likely incomplete parse")
             raise ValueError("Incomplete plan")
 
     except (ValueError, KeyError, TypeError) as parse_err:
-        print(f"Planner failed ({parse_err}), falling back to guarded exec()")
+        print(f"[LLM] Planner failed ({parse_err}), falling back to guarded exec()")
         try:
             local_vars = {"df": df.copy(), "pd": pd}
             exec(code, {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "round": round, "sorted": sorted, "list": list, "dict": dict, "tuple": tuple, "range": range, "enumerate": enumerate, "zip": zip, "min": min, "max": max, "sum": sum, "abs": abs, "True": True, "False": False, "None": None}}, local_vars)
             result = local_vars.get("result", None)
             if result is None:
                 raise ValueError("Code ran but 'result' variable was not set")
-            print("Exec fallback result:", type(result).__name__)
+            print(f"[LLM] Exec fallback result type: {type(result).__name__}")
         except Exception as exec_err:
-            print(f"Exec fallback also failed: {exec_err}")
+            print(f"[LLM] Exec fallback ALSO FAILED: {exec_err}")
             error_response = {
                 "answer": "Unable to interpret this query. Please try rephrasing.",
                 "headline": "Clarification required",
@@ -611,11 +781,13 @@ def get_full_answer(user_question, chat_history=None):
                 "followups": ["Break this down by state", "Compare by device type", "Trend over time"],
                 "verification": {"rows_used": len(df), "status": "error", "error": str(exec_err)}
             }
-            print("Query time:", time.time() - start)
+            print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
             return error_response
     except Exception as e:
-        print(f"Code execution error: {e}")
-        print("Query time:", time.time() - start)
+        print(f"[PIPELINE] Code execution error: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
         return {
             "answer": "Execution error: " + str(e) + " | Code was: " + code,
             "headline": "QUERY ERROR",
@@ -626,11 +798,70 @@ def get_full_answer(user_question, chat_history=None):
             "followups": []
         }
 
+    # Handle string results (not a real data result)
+    if isinstance(result, str):
+        print(f"[PIPELINE] String result: {result[:80]}")
+        # Try to still show something useful
+        return {
+            "answer": result if len(result) > 10 else "The query returned a text result. Try asking a more specific data question.",
+            "headline": "RESULT",
+            "stats": [{"label": "RESULT", "value": result[:100]}],
+            "data": result,
+            "code": code,
+            "chart": None,
+            "followups": ["What is the average transaction amount?", "Which bank has the most failures?", "Show fraud rate by state"],
+            "verification": {"rows_used": len(df), "status": "ok", "error": None}
+        }
+
+    # Handle NaN / None scalar results
+    if result is None or (isinstance(result, float) and math.isnan(result)):
+        print(f"[PIPELINE] Result is NaN or None — likely no matching data")
+        answer = "No matching data was found for this query."
+        followups = []
+        if corrections:
+            answer += " We auto-corrected: " + ", ".join(f"'{orig}' → '{fixed}'" for orig, fixed in corrections) + "."
+        if suggestions:
+            answer += " " + " ".join(suggestions)
+            followups = [s.replace("Did you mean ", "").replace("?", "").strip("'").split("' (")[0] for s in suggestions[:3]]
+        else:
+            followups = ["Show all states in the data", "Which bank has the most failures?", "What is the fraud rate?"]
+        return {
+            "answer": answer,
+            "headline": "NO MATCHING DATA",
+            "stats": [],
+            "data": None,
+            "code": code,
+            "chart": None,
+            "followups": followups,
+            "verification": {"rows_used": len(df), "status": "no_match", "error": "Result was NaN/None"}
+        }
+
     verification = verify_result(df, result)
+    print(f"[PIPELINE] Result type: {type(result).__name__}")
+    if isinstance(result, pd.Series):
+        print(f"[PIPELINE] Series length={len(result)}, dtype={result.dtype}")
+    elif isinstance(result, pd.DataFrame):
+        print(f"[PIPELINE] DataFrame shape={result.shape}")
+    else:
+        print(f"[PIPELINE] Scalar value: {result}")
 
     # Sort Series descending so chart, headline, and stats all agree
     if isinstance(result, pd.Series) and len(result) > 0:
         result = result.sort_values(ascending=False)
+        print(f"[PIPELINE] Sorted Series top 3: {dict(list(result.head(3).items()))}")
+    elif isinstance(result, pd.Series) and len(result) == 0:
+        # Empty Series — return a friendly "no results" response
+        print("[PIPELINE] Empty Series result, returning no-results response")
+        return {
+            "answer": "The query returned no results. This could mean the filter doesn't match any data. Try rephrasing or broadening your question.",
+            "headline": "NO RESULTS FOUND",
+            "stats": [],
+            "data": None,
+            "code": code,
+            "chart": None,
+            "followups": ["What is the average transaction amount?", "Show fraud rate by bank", "Compare device types"],
+            "verification": {"rows_used": len(df), "status": "empty", "error": "Query returned empty result"}
+        }
 
     chart = generate_chart(result, user_question)
     followups = generate_followup_questions(user_question, result)
@@ -646,6 +877,15 @@ def get_full_answer(user_question, chat_history=None):
     elif result is not None and not isinstance(result, pd.Series):
         stats = [{"label": "RESULT", "value": str(result)}]
 
+    print(f"[PIPELINE] Headline: {headline}")
+    print(f"[PIPELINE] Chart: {'yes' if chart else 'no'}")
+    print(f"[PIPELINE] Stats count: {len(stats)}")
+
+    # If corrections were made, note them in the answer
+    if corrections:
+        correction_note = " (Auto-corrected: " + ", ".join(f"'{orig}' → '{fixed}'" for orig, fixed in corrections) + ")"
+        insight = insight + correction_note
+
     response = {
         "answer": insight,
         "headline": headline,
@@ -657,5 +897,6 @@ def get_full_answer(user_question, chat_history=None):
         "verification": verification
     }
     set_cached(user_question, response)
-    print("Query time:", time.time() - start)
+    print(f"[PIPELINE] Query time: {time.time() - start:.2f}s")
+    print(f"{'='*60}\n")
     return response

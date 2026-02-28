@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from engine import get_full_answer, generate_chart, df
+from sql_analyst import ask_sql
 import os
 import json
 
@@ -31,6 +32,21 @@ def ask():
 
     history = history[-2:]
     result = get_full_answer(question, history)
+
+    return jsonify(result)
+
+
+@app.route("/sql-ask", methods=["POST"])
+def sql_ask():
+    data = request.get_json()
+    question = data.get("question", "")
+    history = data.get("history", [])
+
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+
+    history = history[-2:]
+    result = ask_sql(question, history)
 
     return jsonify(result)
 
