@@ -83,6 +83,7 @@ def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
     ALLOWED_AGG_FUNCS = {
         "sum", "mean", "count", "min", "max",
         "median", "std", "var", "nunique", "first", "last",
+        "size", "idxmax", "idxmin"
     }
 
     group_by = plan["group_by"]
@@ -186,6 +187,9 @@ _OPERATION_HANDLERS = {
     "std":     _handle_single_agg("std"),
     "var":     _handle_single_agg("var"),
     "nunique": _handle_single_agg("nunique"),
+    "size":    _handle_single_agg("size"),
+    "idxmax":  _handle_single_agg("idxmax"),
+    "idxmin":  _handle_single_agg("idxmin"),
 }
 
 
