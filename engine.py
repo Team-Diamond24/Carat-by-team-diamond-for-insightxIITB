@@ -54,6 +54,8 @@ def resolve_entities(question, df):
         "kolkata": "West Bengal", "pune": "Maharashtra",
         "sbi": "SBI", "hdfc": "HDFC", "icici": "ICICI",
         "paytm": "Paytm", "gpay": "GPay", "phonepe": "PhonePe",
+        "broadband": "WiFi", "wifi": "WiFi", "wi-fi": "WiFi",
+        "4g": "4G", "5g": "5G", "3g": "3G",
     }
 
     q_lower = question.lower()
@@ -222,11 +224,123 @@ def _build_fast_response(result, question, headline, insight):
 
 def try_fast_query(question, df):
     q = question.lower()
-    if any(w in q for w in ["fraud", "flagged"]) and "state" in q:
-        fraud_by_state = df.groupby("sender_state")["fraud_flag"].mean().round(4) * 100
-        fraud_by_state = fraud_by_state.sort_values(ascending=False)
-        return _build_fast_response(fraud_by_state, question, f"{fraud_by_state.index[0]} has highest fraud", f"{fraud_by_state.index[0]} has the highest fraud rate at {fraud_by_state.iloc[0]:.2f}%. Based on {len(df):,} transactions.")
-    return None # Condensed for space, standard queries will just route to LLM
+    
+    # a) weekend traffic %
+    if "weekend" in q and any(w in q for w in ["percent", "percentage", "traffic", "rate"]):
+        result = round(df['is_weekend'].mean() * 100, 2)
+        headline = f"{result}% weekend traffic"
+        insight = f"{result}% of all transactions occur on weekends. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # b) overall fraud rate (no filters)
+    if "fraud" in q and "rate" in q and "state" not in q and "bank" not in q and "5000" not in q and "high" not in q:
+        result = round(df['fraud_flag'].mean() * 100, 2)
+        headline = f"{result}% fraud rate"
+        insight = f"The overall fraud rate is {result}% across all {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # c) high-value fraud rate
+    if "fraud" in q and ("5000" in q or "high" in q or "above" in q):
+        high_val = df[df['amount_inr'] > 5000]
+        result = round(high_val['fraud_flag'].mean() * 100, 2)
+        headline = f"{result}% high-value fraud rate"
+        insight = f"{result}% of transactions above ₹5,000 are flagged for fraud. Based on {len(high_val):,} high-value transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # d) failure rate by device type
+    if "failure rate" in q and "device" in q:
+        total = df.groupby('device_type')['transaction_id'].count()
+        failed = df[df['transaction_status']=='FAILED'].groupby('device_type')['transaction_id'].count()
+        result = (failed / total * 100).round(2).sort_values(ascending=False)
+        headline = f"{result.index[0]} highest failure: {result.iloc[0]}%"
+        insight = f"{result.index[0]} has the highest failure rate at {result.iloc[0]}%. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # e) failure rate 5G vs WiFi
+    if "failure" in q and any(w in q for w in ["5g", "wifi", "wi-fi"]) and "device" not in q:
+        networks = ['5G', 'WiFi']
+        total = df[df['network_type'].isin(networks)].groupby('network_type')['transaction_id'].count()
+        failed = df[(df['transaction_status']=='FAILED') & (df['network_type'].isin(networks))].groupby('network_type')['transaction_id'].count()
+        result = (failed / total * 100).round(2)
+        headline = f"5G vs WiFi failure rates"
+        insight = f"5G failure rate: {result.get('5G',0):.2f}%, WiFi failure rate: {result.get('WiFi',0):.2f}%. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # f) success rate iOS vs Android
+    if "success" in q and any(w in q for w in ["ios", "android"]):
+        devices = ['iOS', 'Android']
+        total = df[df['device_type'].isin(devices)].groupby('device_type')['transaction_id'].count()
+        success = df[(df['transaction_status']=='SUCCESS') & (df['device_type'].isin(devices))].groupby('device_type')['transaction_id'].count()
+        result = (success / total * 100).round(2)
+        headline = f"iOS: {result.get('iOS',0):.2f}% | Android: {result.get('Android',0):.2f}%"
+        insight = f"iOS success rate: {result.get('iOS',0):.2f}%, Android: {result.get('Android',0):.2f}%. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # g) 4G vs broadband (WiFi) volume
+    if "volume" in q and ("4g" in q or "broadband" in q or "wifi" in q) and "failure" not in q:
+        networks = ['4G', 'WiFi']
+        result = df[df['network_type'].isin(networks)].groupby('network_type')['transaction_id'].count().sort_values(ascending=False)
+        headline = f"4G vs WiFi transaction volume"
+        insight = f"4G: {result.get('4G',0):,} transactions, WiFi: {result.get('WiFi',0):,} transactions. Based on {len(df):,} total."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # h) state with most transactions for 18-25
+    if "state" in q and ("18-25" in q or "18 to 25" in q):
+        filtered = df[df['sender_age_group'] == '18-25']
+        result = filtered.groupby('sender_state')['transaction_id'].count().sort_values(ascending=False)
+        headline = f"{result.index[0]} leads: {result.iloc[0]:,} total"
+        insight = f"{result.index[0]} leads with {result.iloc[0]:,} transactions from the 18-25 age group. Based on {len(filtered):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # i) P2P by age group
+    if "p2p" in q and "age" in q:
+        p2p = df[df['transaction_type'] == 'P2P']
+        result = p2p.groupby('sender_age_group')['transaction_id'].count().sort_values(ascending=False)
+        headline = f"P2P by age group"
+        insight = f"The {result.index[0]} age group leads P2P transactions with {result.iloc[0]:,}. Based on {len(p2p):,} P2P transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # j) bank with most failed transactions
+    if "bank" in q and any(w in q for w in ["fail", "failed", "failure"]) and "rate" not in q:
+        failed = df[df['transaction_status'] == 'FAILED']
+        result = failed.groupby('sender_bank')['transaction_id'].count().sort_values(ascending=False)
+        headline = f"{result.index[0]} has most failures: {result.iloc[0]:,}"
+        insight = f"{result.index[0]} has the highest number of failed transactions at {result.iloc[0]:,}. Based on {len(failed):,} failed transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # k) average amount by category
+    if "average" in q and "amount" in q and ("category" in q or "food" in q or "entertainment" in q):
+        result = df.groupby('merchant_category')['amount_inr'].mean().round(2).sort_values(ascending=False)
+        headline = f"Avg amount by category"
+        insight = f"Average transaction amounts range from ₹{result.min():,.2f} to ₹{result.max():,.2f}. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    # l) peak hour by specific category (e.g. Entertainment)
+    if "peak hour" in q and "category" not in q:
+        known_categories = ['Food', 'Grocery', 'Shopping', 'Utilities', 'Entertainment', 'Healthcare', 'Transport', 'Fuel', 'Education', 'Other']
+        extracted_category = None
+        for cat in known_categories:
+            if cat.lower() in q:
+                extracted_category = cat
+                break
+        if extracted_category:
+            filtered = df[df['merchant_category'] == extracted_category]
+            if len(filtered) > 0:
+                peak_hour = int(filtered['hour_of_day'].value_counts().index[0])
+                result = peak_hour
+                headline = f"Peak hour: {peak_hour}:00"
+                insight = f"The {extracted_category} category sees peak transaction volume at {peak_hour}:00. Based on {len(filtered):,} transactions."
+                return _build_fast_response(result, question, headline, insight)
+    
+    # m) peak hours for ALL categories
+    if "peak hour" in q and "category" in q:
+        result = df.groupby('merchant_category')['hour_of_day'].agg(lambda x: x.value_counts().index[0])
+        result.name = "peak_hour"
+        headline = "Peak hours by merchant category"
+        insight = f"Peak transaction hours vary by merchant category. Based on {len(df):,} transactions."
+        return _build_fast_response(result, question, headline, insight)
+    
+    return None
 
 
 class PandasAnalyst(BaseAnalyst):

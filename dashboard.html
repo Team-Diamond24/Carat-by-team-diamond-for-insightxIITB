@@ -399,7 +399,7 @@
                 const statusLabel = document.getElementById('typing-status');
                 if (statusLabel) {
                     if (elapsed > 15) {
-                        statusLabel.textContent = "This is taking longer than usual, exploring deeper...";
+                        statusLabel.textContent = "This query is taking longer than usual. Please try a simpler question.";
                         statusLabel.classList.add("text-amber-500");
                     } else {
                         statusLabel.textContent = "Analysing... " + elapsed + "s";
@@ -655,9 +655,9 @@
                 const data = await res.json();
                 removeTypingIndicator();
 
-                // Show floating banner if there's a hard HTTP error from backend proxy
-                if (data.error) {
-                    showDismissibleError(data.error || "Server encountered an error processing this request.");
+                // BUG 7 FIX: Handle error responses gracefully
+                if (data.error || data.clarification_required) {
+                    showDismissibleError("I couldn't quite understand that. Try rephrasing — for example: 'Show total transactions by bank' or 'What is the failure rate by state?'");
                     input.disabled = false;
                     document.getElementById("send-btn").disabled = false;
                     input.focus();

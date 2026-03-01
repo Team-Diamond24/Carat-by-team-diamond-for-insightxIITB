@@ -8,6 +8,8 @@ dedicated handler functions.
 
 Supported operations:
   - "filter"  : Equality filter on a column
+  - "filter_multi" : Multiple AND filters
+  - "filter_then_groupby" : Filter first, then groupby
   - "groupby" : Group by a column with an aggregation function
   - "mean"    : Compute the mean of a single column
 
@@ -58,12 +60,90 @@ def _handle_filter(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _handle_filter_multi(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter rows for multiple conditions using AND logic.
+
+    Plan keys:
+        filters (list of dict): List of filter dictionaries with 'column' and 'value'.
+    """
+    filters = plan.get("filters", [])
+    if not filters:
+        return df
+        
+    mask = pd.Series(True, index=df.index)
+    for f in filters:
+        column = f["column"]
+        value = f["value"]
+        if column not in df.columns:
+            raise ValueError(f"Column '{column}' not found.")
+        mask &= (df[column] == value)
+        
+    result = df[mask]
+    
+    # Case insensitive fallback
+    if len(result) == 0:
+        mask_fallback = pd.Series(True, index=df.index)
+        for f in filters:
+             column = f["column"]
+             value = f["value"]
+             if isinstance(value, str):
+                  mask_fallback &= (df[column].astype(str).str.lower() == value.lower())
+             else:
+                  mask_fallback &= (df[column] == value)
+        result = df[mask_fallback]
+        
+    return result
+
+
+def _handle_filter_then_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
+    """
+    Apply filters first, then groupby on the filtered result.
+
+    Plan keys:
+        filters (list of dict): List of filter dictionaries with 'column' and 'value'.
+        by (str or list): Column(s) to group by.
+        agg (dict): Aggregation spec like {"transaction_id": "count"}.
+
+    Returns:
+        pd.Series with grouped and aggregated result.
+    """
+    filters = plan.get("filters", [])
+    by_cols = plan.get("by", [])
+    agg_dict = plan.get("agg", {})
+    
+    # Apply filters first
+    filtered_df = df
+    for f in filters:
+        column = f["column"]
+        value = f["value"]
+        if column not in filtered_df.columns:
+            raise ValueError(f"Column '{column}' not found.")
+        filtered_df = filtered_df[filtered_df[column] == value]
+    
+    # Then groupby on filtered result
+    if not by_cols or not agg_dict:
+        raise ValueError("filter_then_groupby requires 'by' and 'agg' keys")
+    
+    first_col = list(agg_dict.keys())[0]
+    first_func = list(agg_dict.values())[0]
+    
+    grouped = filtered_df.groupby(by_cols)[first_col]
+    result = getattr(grouped, first_func)()
+    
+    # Flatten MultiIndex to simple strings
+    if isinstance(result.index, pd.MultiIndex):
+         result.index = result.index.map(lambda x: ' - '.join(str(e) for e in x))
+    
+    return result
+
+
 def _handle_groupby(plan: Dict[str, Any], df: pd.DataFrame) -> pd.Series:
     """
     Group by a column and apply an aggregation function.
 
     Plan keys:
-        group_by   (str): Column name to group by.
+        group_by   (str or list): Column name(s) to group by.
         agg_column (str): Column name to aggregate.
         agg_func   (str): Aggregation function name. One of:
                           "sum", "mean", "count", "min", "max",
@@ -134,41 +214,6 @@ def _handle_single_agg(func_name: str):
     return handler
 
 
-def _handle_filter_multi(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Filter rows for multiple conditions using AND logic.
-
-    Plan keys:
-        filters (list of dict): List of feature dictionaries with 'column' and 'value'.
-    """
-    filters = plan.get("filters", [])
-    if not filters:
-        return df
-        
-    mask = pd.Series(True, index=df.index)
-    for f in filters:
-        column = f["column"]
-        value = f["value"]
-        if column not in df.columns:
-            raise ValueError(f"Column '{column}' not found.")
-        mask &= (df[column] == value)
-        
-    result = df[mask]
-    
-    # Case insensitive fallback
-    if len(result) == 0:
-        mask_fallback = pd.Series(True, index=df.index)
-        for f in filters:
-             column = f["column"]
-             value = f["value"]
-             if isinstance(value, str):
-                  mask_fallback &= (df[column].astype(str).str.lower() == value.lower())
-             else:
-                  mask_fallback &= (df[column] == value)
-        result = df[mask_fallback]
-        
-    return result
-
 # ---------------------------------------------------------------------------
 # Operation dispatch registry
 # ---------------------------------------------------------------------------
@@ -176,6 +221,7 @@ def _handle_filter_multi(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame
 _OPERATION_HANDLERS = {
     "filter":  _handle_filter,
     "filter_multi": _handle_filter_multi,
+    "filter_then_groupby": _handle_filter_then_groupby,
     "groupby": _handle_groupby,
     "mean":    _handle_mean,
     "sum":     _handle_single_agg("sum"),
@@ -212,7 +258,7 @@ def execute_plan(
         first_col = list(agg_dict.keys())[0]
         first_func = list(agg_dict.values())[0]
         plan = dict(plan,
-            group_by=by_cols,  # Keep the list untouched
+            group_by=by_cols,
             agg_column=first_col,
             agg_func=first_func
         )
@@ -231,4 +277,3 @@ def execute_plan(
 
     handler = _OPERATION_HANDLERS[operation]
     return handler(plan, df)
-

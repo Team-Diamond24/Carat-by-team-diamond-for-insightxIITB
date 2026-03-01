@@ -36,8 +36,6 @@ limit_admin = "10/minute"
 
 limiter = Limiter(key_func=get_remote_address)
 if SLOWAPI_INSTALLED:
-    app.state = type('', (), {})()
-    app.state.limiter = limiter
     limiter.init_app(app)
     app.register_error_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

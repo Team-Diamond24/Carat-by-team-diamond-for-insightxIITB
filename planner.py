@@ -113,10 +113,12 @@ class PandasPlanVisitor(ast.NodeVisitor):
              # Could be df[df['col'] == val] or df[(df['col'] == val) & ...]
              filters = self._extract_filters(node.slice)
              if filters:
-                 if len(filters) == 1:
-                     self.plan = dict(op="filter", **filters[0])
-                 else:
-                     self.plan = {"op": "filter_multi", "filters": filters}
+                 # BUG 2 FIX: Only set self.plan if it's None
+                 if self.plan is None:
+                     if len(filters) == 1:
+                         self.plan = dict(op="filter", **filters[0])
+                     else:
+                         self.plan = {"op": "filter_multi", "filters": filters}
                  return
          
          self.generic_visit(node)
