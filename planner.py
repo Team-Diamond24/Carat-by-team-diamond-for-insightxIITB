@@ -11,7 +11,6 @@ from typing import Any, Dict, Optional, List, Union
 _ALLOWED_AGG_FUNCS = {
     "sum", "mean", "count", "min", "max",
     "median", "std", "var", "nunique", "first", "last", "size",
-    "idxmax", "idxmin"
 }
 
 class PandasPlanVisitor(ast.NodeVisitor):

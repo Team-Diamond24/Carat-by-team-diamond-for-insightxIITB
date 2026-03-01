@@ -25,6 +25,11 @@ USE_CSV = os.environ.get("USE_CSV", "false").lower() == "true"
 try:
     if USE_CSV and os.path.exists(csv_path):
         df = pd.read_csv(csv_path)
+        df = df.rename(columns={
+            "transaction id": "transaction_id",
+            "transaction type": "transaction_type",
+            "amount (INR)": "amount_inr"
+        })
     else:
         df = pd.DataFrame()
     print(" Done!")
@@ -248,7 +253,9 @@ class PandasAnalyst(BaseAnalyst):
             f"You are a pandas data analyst. DataFrame 'df' has {row_count:,} UPI transactions.\n\n"
             f"Allowed values:\n{col_detail}\n\n{history_context}"
             "RULES:\n1. WRITE ONLY EXECUTABLE PANDAS CODE. STORE IN 'result'.\n"
-            "2. No markdown, no print, no comments. Just raw python code like `result = ...`.\n\n"
+            "2. No markdown, no print, no comments. Just raw python code like `result = ...`.\n"
+            "3. NEVER use .size(), .idxmax(), .sort_values(). For grouping, use .count() or .sum() on a specific column. (e.g. df.groupby('hour_of_day')['transaction_id'].count())\n"
+            "4. Supported patterns: df.groupby('col')['agg_col'].func(), df['col'].func(), df[df['col']==val], df['col'].value_counts()\n\n"
             f"Question: {user_question}"
         )
         return llm_client.call_model(prompt, use_fallback=use_fallback)
