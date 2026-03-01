@@ -19,23 +19,29 @@ from shared_utils import (
     generate_followup_questions, format_clarification_response
 )
 
-print("[ENGINE] Loading data...", end="", flush=True)
-csv_path = os.path.join(os.path.dirname(__file__), "upi_transactions_2024.csv")
 USE_CSV = os.environ.get("USE_CSV", "false").lower() == "true"
-try:
-    if USE_CSV and os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
-        df = df.rename(columns={
-            "transaction id": "transaction_id",
-            "transaction type": "transaction_type",
-            "amount (INR)": "amount_inr"
-        })
-    else:
+csv_path = os.path.join(os.path.dirname(__file__), "upi_transactions_2024.csv")
+
+if USE_CSV:
+    print("[ENGINE] Loading CSV data...", end="", flush=True)
+    try:
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            df = df.rename(columns={
+                "transaction id": "transaction_id",
+                "transaction type": "transaction_type",
+                "amount (INR)": "amount_inr"
+            })
+            print(f" Done! ({len(df):,} rows)")
+        else:
+            df = pd.DataFrame()
+            print(f" Warning: {csv_path} not found. Empty DataFrame created.")
+    except Exception as e:
         df = pd.DataFrame()
-    print(" Done!")
-except Exception as e:
-    df = pd.DataFrame()
-    print(f" Failed: {e}")
+        print(f" Failed: {e}")
+else:
+    df = None
+    print("[ENGINE] SQL mode — skipping CSV load.")
 
 def resolve_entities(question, df):
     """
@@ -129,33 +135,179 @@ def clean_code(raw_code):
 def generate_chart(result, user_question):
     try:
         if result is None: return None
-        if isinstance(result, dict): result = pd.Series(result)
+        if isinstance(result, dict): result = pd.Series(dict)
+        
         if isinstance(result, pd.Series):
             if len(result) == 0: return None
-            categories = [str(x) for x in result.index.tolist()]
-            values = result.values.tolist()
-            chart_df = pd.DataFrame({"Category": categories,"Value": [float(v) for v in values]})
-            x_label = result.index.name or "Category"
-            y_label = result.name or "Value"
-            chart_df = chart_df.sort_values("Value", ascending=True)
-            fig = px.bar(chart_df, x="Value", y="Category", title=f"{y_label} by {x_label}", orientation="h", labels={"Category": x_label, "Value": y_label}, color_discrete_sequence=["#b1b2ff"])
+            
+            # Detect if this is percentage data
+            q = user_question.lower()
+            is_percentage = any(kw in q for kw in ["rate", "percent", "percentage", "ratio", "proportion"])
+            
+            # Keep original order - highest to lowest
+            sorted_result = result.sort_values(ascending=False)
+            categories = [str(x) for x in sorted_result.index.tolist()]
+            values = sorted_result.values.tolist()
+            
+            # Create chart dataframe
+            chart_df = pd.DataFrame({"Category": categories, "Value": [float(v) for v in values]})
+            x_label = sorted_result.index.name or "Category"
+            y_label = sorted_result.name or "Value"
+            
+            # Decide chart type based on data characteristics
+            n_items = len(chart_df)
+            
+            # Pie chart for percentages with few categories
+            if is_percentage and n_items <= 8:
+                fig = px.pie(
+                    chart_df, 
+                    names="Category", 
+                    values="Value",
+                    title=f"{y_label} by {x_label}",
+                    color_discrete_sequence=["#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6", "#fb923c", "#facc15", "#4ade80"],
+                    hole=0.35
+                )
+                fig.update_traces(
+                    textposition="inside",
+                    textinfo="label+percent",
+                    textfont_size=11,
+                    marker=dict(line=dict(color='#1a1b41', width=2))
+                )
+            # Horizontal bar for many items (easier to read labels)
+            elif n_items > 6:
+                # For horizontal bars, reverse order so highest is at top
+                chart_df = chart_df.iloc[::-1].reset_index(drop=True)
+                fig = px.bar(
+                    chart_df, 
+                    x="Value", 
+                    y="Category",
+                    title=f"{y_label} by {x_label}",
+                    orientation="h",
+                    labels={"Category": x_label, "Value": y_label},
+                    color_discrete_sequence=["#818cf8"],
+                    text="Value"
+                )
+                # Format text on bars
+                if is_percentage:
+                    fig.update_traces(texttemplate='%{x:.2f}%', textposition="outside")
+                else:
+                    fig.update_traces(texttemplate='%{x:,.0f}', textposition="outside")
+                    
+                fig.update_layout(
+                    xaxis=dict(tickformat=",.0f" if not is_percentage else ".1f", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(showgrid=False, categoryorder='total ascending')
+                )
+            # Vertical bar for few items
+            else:
+                fig = px.bar(
+                    chart_df, 
+                    x="Category", 
+                    y="Value",
+                    title=f"{y_label} by {x_label}",
+                    labels={"Category": x_label, "Value": y_label},
+                    color_discrete_sequence=["#818cf8"],
+                    text="Value"
+                )
+                if is_percentage:
+                    fig.update_traces(texttemplate='%{y:.2f}%', textposition="outside")
+                else:
+                    fig.update_traces(texttemplate='%{y:,.0f}', textposition="outside")
+                    
+                fig.update_layout(
+                    yaxis=dict(tickformat=",.0f" if not is_percentage else ".1f", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(showgrid=False)
+                )
+                
         elif isinstance(result, pd.DataFrame) and len(result) > 0:
             numeric_cols = result.select_dtypes(include="number").columns.tolist()
             non_numeric_cols = result.select_dtypes(exclude="number").columns.tolist()
+            
             if len(numeric_cols) >= 2:
                 x_col, y_col = numeric_cols[0], numeric_cols[1]
-                fig = px.scatter(result, x=x_col, y=y_col, title=user_question, labels={x_col: x_col, y_col: y_col}, color_discrete_sequence=["#b1b2ff"])
-            elif len(numeric_cols) == 1:
+                fig = px.scatter(
+                    result, 
+                    x=x_col, 
+                    y=y_col, 
+                    title=user_question,
+                    labels={x_col: x_col, y_col: y_col},
+                    color_discrete_sequence=["#818cf8"]
+                )
+                fig.update_layout(
+                    xaxis=dict(tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)")
+                )
+            elif len(numeric_cols) == 1 and len(non_numeric_cols) == 0:
                 col = numeric_cols[0]
-                fig = px.histogram(result, x=col, title=user_question, labels={col: col}, color_discrete_sequence=["#b1b2ff"])
+                fig = px.histogram(
+                    result, 
+                    x=col, 
+                    title=user_question,
+                    labels={col: col},
+                    color_discrete_sequence=["#818cf8"]
+                )
+                fig.update_layout(
+                    yaxis=dict(title="Count", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(tickformat=",", showgrid=False)
+                )
             elif len(non_numeric_cols) >= 1 and len(numeric_cols) >= 1:
-                fig = px.bar(result, x=non_numeric_cols[0], y=numeric_cols[0], title=user_question, labels={non_numeric_cols[0]: non_numeric_cols[0], numeric_cols[0]: numeric_cols[0]}, color_discrete_sequence=["#b1b2ff"])
-            else: return None
-        else: return None
+                cat_col = non_numeric_cols[0]
+                val_col = numeric_cols[0]
+                # Sort by value descending
+                sorted_df = result.sort_values(val_col, ascending=False).reset_index(drop=True)
+                
+                if len(sorted_df) > 6:
+                    # Horizontal bar - reverse for top-to-bottom display
+                    sorted_df = sorted_df.iloc[::-1].reset_index(drop=True)
+                    fig = px.bar(
+                        sorted_df, 
+                        x=val_col, 
+                        y=cat_col,
+                        title=user_question,
+                        orientation="h",
+                        labels={cat_col: cat_col, val_col: val_col},
+                        color_discrete_sequence=["#818cf8"],
+                        text=val_col
+                    )
+                    fig.update_traces(texttemplate='%{x:,.0f}', textposition="outside")
+                    fig.update_layout(
+                        xaxis=dict(tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                        yaxis=dict(showgrid=False, categoryorder='total ascending')
+                    )
+                else:
+                    # Vertical bar
+                    fig = px.bar(
+                        sorted_df, 
+                        x=cat_col, 
+                        y=val_col,
+                        title=user_question,
+                        labels={cat_col: cat_col, val_col: val_col},
+                        color_discrete_sequence=["#818cf8"],
+                        text=val_col
+                    )
+                    fig.update_traces(texttemplate='%{y:,.0f}', textposition="outside")
+                    fig.update_layout(
+                        yaxis=dict(tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                        xaxis=dict(showgrid=False)
+                    )
+            else: 
+                return None
+        else: 
+            return None
 
-        fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#3730a3", family="JetBrains Mono"), title_font_size=12, margin=dict(t=30, r=20, b=40, l=120))
+        # Global styling
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#3730a3", family="JetBrains Mono", size=11),
+            title=dict(font=dict(size=13), x=0.01),
+            margin=dict(t=45, r=25, b=55, l=120),
+            showlegend=False
+        )
+        
         return json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig))
-    except Exception: return None
+    except Exception as e:
+        print(f"[CHART] Generation error: {e}")
+        return None
 
 
 def generate_insight(user_question, result):
@@ -165,8 +317,11 @@ def generate_insight(user_question, result):
     is_count = any(w in q for w in ["count", "total", "how many", "number of", "volume"])
 
     if isinstance(result, pd.Series) and len(result) > 0:
-        top_idx, top_val = result.idxmax(), result.max()
-        bot_idx, bot_val = result.idxmin(), result.min()
+        # Sort descending to get proper highest/lowest
+        sorted_result = result.sort_values(ascending=False)
+        top_idx, top_val = sorted_result.index[0], sorted_result.iloc[0]
+        bot_idx, bot_val = sorted_result.index[-1], sorted_result.iloc[-1]
+        
         if is_pct:
             headline = f"{top_idx}: {float(top_val):.2f}%"
             insight = f"{top_idx} leads at {float(top_val):.2f}%, while {bot_idx} is lowest at {float(bot_val):.2f}%. Based on {rows:,} transactions."
@@ -202,10 +357,12 @@ def _build_fast_response(result, question, headline, insight):
     followups = generate_followup_questions(question, result)
     stats = []
     if isinstance(result, pd.Series) and len(result) > 0:
+        # Sort descending for proper highest/lowest
+        sorted_result = result.sort_values(ascending=False)
         stats = [
-            {"label": "HIGHEST", "value": str(result.index[0]) + ": " + str(round(float(result.iloc[0]), 2))},
-            {"label": "AVERAGE", "value": str(round(float(result.mean()), 2))},
-            {"label": "LOWEST", "value": str(result.index[-1]) + ": " + str(round(float(result.iloc[-1]), 2))}
+            {"label": "HIGHEST", "value": str(sorted_result.index[0]) + ": " + str(round(float(sorted_result.iloc[0]), 2))},
+            {"label": "AVERAGE", "value": str(round(float(sorted_result.mean()), 2))},
+            {"label": "LOWEST", "value": str(sorted_result.index[-1]) + ": " + str(round(float(sorted_result.iloc[-1]), 2))}
         ]
     elif result is not None and not isinstance(result, pd.Series):
         stats = [{"label": "RESULT", "value": str(result)}]
@@ -434,6 +591,7 @@ class PandasAnalyst(BaseAnalyst):
 
         stats = []
         if isinstance(result, pd.Series) and len(result) > 0:
+            # Result is already sorted descending
             stats = [
                 {"label": "HIGHEST", "value": f"{result.index[0]}: {result.iloc[0]:.2f}"},
                 {"label": "AVERAGE", "value": f"{result.mean():.2f}"},

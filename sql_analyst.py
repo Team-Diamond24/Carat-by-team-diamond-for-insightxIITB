@@ -10,7 +10,7 @@ from llm_client import llm_client
 from shared_utils import BaseAnalyst, validate_question, format_clarification_response, generate_followup_questions
 
 # NOTE: `from db import get_connection` is imported lazily inside
-# execute_sql() to avoid a hard dependency on psycopg2 at import time.
+# execute_sql() to avoid a hard dependency on sqlite3 at import time.
 
 TABLE_SCHEMA = """
 Table: upi_transactions_2024
@@ -69,88 +69,299 @@ def execute_sql(sql: str) -> pd.DataFrame:
     from db import get_connection
     conn = get_connection()
     try:
-        cur = conn.cursor()
-        cur.execute("SET TRANSACTION READ ONLY;")
-        cur.close()
         df = pd.read_sql(sql.rstrip(";"), conn)
     finally:
         conn.close()
     return df
 
+def _humanize_col(col_name: str) -> str:
+    """Convert column_name or 'Column Name' to readable 'Column Name'."""
+    return col_name.replace("_", " ").strip().title()
+
+
+def _detect_chart_type(df: pd.DataFrame, question: str) -> str:
+    """Pick the best chart type based on the question and data shape."""
+    q = question.lower()
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+    n_rows = len(df)
+
+    # Pie chart: good for percentages, proportions, shares, distribution across few categories
+    pie_keywords = ["percentage", "percent", "proportion", "share", "distribution", "breakdown", "split", "ratio", "pie"]
+    if any(kw in q for kw in pie_keywords) and len(cat_cols) >= 1 and len(num_cols) >= 1 and 2 <= n_rows <= 12:
+        return "pie"
+
+    # Scatter: correlation between two numeric columns
+    if len(num_cols) >= 2 and len(cat_cols) == 0:
+        return "scatter"
+
+    # Bar chart: the default for category + metric
+    if len(cat_cols) >= 1 and len(num_cols) >= 1:
+        return "hbar" if n_rows > 8 else "bar"
+
+    # Histogram: single numeric column, many rows
+    if len(num_cols) >= 1 and n_rows > 2:
+        return "histogram"
+
+    return "none"
+
+
 def generate_sql_chart(df_result: pd.DataFrame, question: str):
+    """Generate a Plotly chart with proper value display and ordering."""
     try:
         if df_result is None or len(df_result) == 0:
             return None
+        # Single scalar result — no chart needed
+        if len(df_result) == 1 and len(df_result.columns) <= 2:
+            return None
 
-        numeric_cols = df_result.select_dtypes(include="number").columns.tolist()
-        non_numeric_cols = df_result.select_dtypes(exclude="number").columns.tolist()
+        # Work on a copy; force all potentially numeric columns to numeric
+        df = df_result.copy()
+        for col in df.columns:
+            try:
+                converted = pd.to_numeric(df[col], errors="coerce")
+                if converted.notna().sum() > 0 and converted.notna().sum() >= len(df) * 0.5:
+                    df[col] = converted
+            except Exception:
+                pass
+
+        num_cols = df.select_dtypes(include="number").columns.tolist()
+        cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+
+        if len(num_cols) == 0:
+            return None
+
+        chart_type = _detect_chart_type(df, question)
+        if chart_type == "none":
+            return None
+
+        # Color palette
+        COLORS = ["#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
+                   "#fb923c", "#facc15", "#4ade80", "#22d3ee", "#60a5fa"]
         fig = None
+        
+        # Detect if values are percentages
+        q = question.lower()
+        is_percentage = any(kw in q for kw in ["rate", "percent", "percentage", "ratio", "proportion"])
 
-        if len(non_numeric_cols) >= 1 and len(numeric_cols) >= 1:
-            x_col = non_numeric_cols[0]
-            y_col = numeric_cols[0]
-            if len(df_result) > 8:
-                fig = px.bar(df_result, x=y_col, y=x_col, title=question, orientation="h", color_discrete_sequence=["#b1b2ff"])
-                fig.update_layout(yaxis=dict(autorange="reversed"))
+        if chart_type == "pie":
+            cat_col = cat_cols[0]
+            val_col = num_cols[0]
+            # Sort by value descending for consistent legend order
+            df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
+            
+            # Use column names with the dataframe
+            fig = px.pie(
+                df, 
+                names=cat_col,  # Column name
+                values=val_col,  # Column name
+                title=question.capitalize(),
+                color_discrete_sequence=COLORS,
+                hole=0.35
+            )
+            fig.update_traces(
+                textposition="inside",
+                textinfo="label+percent+value",
+                textfont_size=10,
+                marker=dict(line=dict(color='#1a1b41', width=2))
+            )
+
+        elif chart_type == "bar":
+            cat_col = cat_cols[0]
+            val_col = num_cols[0]
+            # Sort descending - highest first
+            df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
+            
+            # Use column names with the dataframe
+            fig = px.bar(
+                df, 
+                x=cat_col,  # Column name
+                y=val_col,  # Column name
+                title=question.capitalize(),
+                color_discrete_sequence=["#818cf8"],
+                labels={cat_col: _humanize_col(cat_col), val_col: _humanize_col(val_col)},
+                text=val_col,  # Column name for text
+                category_orders={cat_col: df[cat_col].tolist()}  # Lock the sort order
+            )
+            
+            # Format text based on data type
+            if is_percentage:
+                fig.update_traces(texttemplate='%{y:.2f}%', textposition="outside", textfont_size=10)
+                fig.update_layout(
+                    yaxis=dict(title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
+                )
             else:
-                fig = px.bar(df_result, x=x_col, y=y_col, title=question, color_discrete_sequence=["#b1b2ff"])
-        elif len(numeric_cols) >= 2:
-            fig = px.scatter(df_result, x=numeric_cols[0], y=numeric_cols[1], title=question, color_discrete_sequence=["#b1b2ff"])
-        elif len(numeric_cols) == 1:
-            fig = px.histogram(df_result, x=numeric_cols[0], title=question, color_discrete_sequence=["#b1b2ff"])
+                fig.update_traces(texttemplate='%{y:,.0f}', textposition="outside", textfont_size=10)
+                fig.update_layout(
+                    yaxis=dict(title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
+                )
+
+        elif chart_type == "hbar":
+            cat_col = cat_cols[0]
+            val_col = num_cols[0]
+            # Sort descending first, then reverse for display (highest at top)
+            df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
+            df = df.iloc[::-1].reset_index(drop=True)  # Reverse for top-to-bottom
+            
+            # Use column names with the dataframe
+            fig = px.bar(
+                df, 
+                x=val_col,  # Column name
+                y=cat_col,  # Column name
+                title=question.capitalize(),
+                orientation="h",
+                color_discrete_sequence=["#818cf8"],
+                labels={val_col: _humanize_col(val_col), cat_col: _humanize_col(cat_col)},
+                text=val_col  # Column name for text
+            )
+            
+            # Format text based on data type
+            if is_percentage:
+                fig.update_traces(texttemplate='%{x:.2f}%', textposition="outside", textfont_size=10)
+                fig.update_layout(
+                    xaxis=dict(title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
+                )
+            else:
+                fig.update_traces(texttemplate='%{x:,.0f}', textposition="outside", textfont_size=10)
+                fig.update_layout(
+                    xaxis=dict(title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
+                )
+
+        elif chart_type == "scatter":
+            # Use column names with the dataframe
+            fig = px.scatter(
+                df, 
+                x=num_cols[0],  # Column name
+                y=num_cols[1],  # Column name
+                title=question.capitalize(),
+                color_discrete_sequence=["#818cf8"],
+                labels={num_cols[0]: _humanize_col(num_cols[0]), num_cols[1]: _humanize_col(num_cols[1])},
+            )
+            fig.update_layout(
+                xaxis=dict(title=_humanize_col(num_cols[0]), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                yaxis=dict(title=_humanize_col(num_cols[1]), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+            )
+
+        elif chart_type == "histogram":
+            # Use column name with the dataframe
+            fig = px.histogram(
+                df, 
+                x=num_cols[0],  # Column name
+                title=question.capitalize(),
+                color_discrete_sequence=["#818cf8"],
+                labels={num_cols[0]: _humanize_col(num_cols[0])},
+            )
+            fig.update_layout(
+                yaxis=dict(title="Count", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                xaxis=dict(title=_humanize_col(num_cols[0]), tickformat=",", showgrid=False),
+            )
 
         if fig is None:
             return None
 
-        fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#3730a3", family="JetBrains Mono"), title_font_size=12, margin=dict(t=30, r=20, b=40, l=120))
+        # Global styling
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#3730a3", family="JetBrains Mono", size=11),
+            title=dict(font=dict(size=13), x=0.01),
+            margin=dict(t=45, r=25, b=55, l=100),
+            showlegend=(chart_type == "pie"),
+        )
+
         return json.loads(plotly.utils.PlotlyJSONEncoder().encode(fig))
     except Exception as e:
-        print(f"SQL chart generation error: {e}")
+        print(f"[CHART] Generation error: {e}")
         return None
 
 class SQLAnalyst(BaseAnalyst):
     def _generate_sql(self, question: str, chat_history: list = None, use_fallback: bool = False) -> dict:
         history_context = ""
         if chat_history:
-            recent = chat_history[-4:]
+            recent = chat_history[-2:]  # Keep last 2 for context
             for msg in recent:
                 history_context += f"{msg.get('role', 'user')}: {msg.get('content', '')}\n"
-            history_context = f"Recent conversation:\n{history_context}\n"
+            history_context = f"Recent context:\n{history_context}\n"
 
-        prompt = f"""You are a PostgreSQL data analyst. Table schema:
+        prompt = f"""You are an expert SQLite data analyst working with UPI transaction data.
+
+Database Schema:
 {TABLE_SCHEMA}
 
-{history_context}Rules:
-- Write ONLY a single valid PostgreSQL SELECT query
-- Table name is upi_transactions_2024
-- NEVER use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or any DDL/DML
-- Always LIMIT results to 100 rows unless explicitly asked
-- Use readable column aliases
-- Result ONLY contains raw SQL, no markdown fences.
+{history_context}Query Requirements:
+- Write a single, optimized SELECT query for SQLite
+- Table name: upi_transactions_2024
+- Security: NEVER use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE
+- Performance: LIMIT results to 100 rows maximum
+- Comparison queries: When asked "which X has the most/least Y", return ALL groups sorted by metric (not just LIMIT 1) for full comparison
+- Sorting: ORDER BY the primary metric DESC unless specifically asked for ascending
+- Readability: Use clear column aliases (e.g., AS "Total Amount", AS "Failure Rate %")
+- Output: Return ONLY the raw SQL query, no markdown code blocks, no explanations
 
-Question: {question}
-SQL:"""
+User Question: {question}
+
+SQL Query:"""
         return llm_client.call_model(prompt, use_fallback=use_fallback)
 
     def _summarize_result(self, question: str, sql: str, df_result: pd.DataFrame, use_fallback: bool = False) -> str:
         if df_result is None or len(df_result) == 0:
             return "The query returned no results."
             
-        data_text = df_result.to_string(index=False) if len(df_result) <= 20 else df_result.head(15).to_string(index=False) + f"\n... ({len(df_result)} total rows)"
+        # Prepare data summary
+        data_text = df_result.to_string(index=False) if len(df_result) <= 15 else df_result.head(10).to_string(index=False) + f"\n... ({len(df_result)} total)"
         
-        prompt = f"""You are a financial analyst summarizing SQL results.
+        # Calculate key statistics for numeric columns
+        stats_context = ""
+        num_cols = df_result.select_dtypes(include="number").columns.tolist()
+        if len(num_cols) > 0:
+            col = num_cols[0]
+            stats_context = f"\nKey Stats: Max={df_result[col].max():.2f}, Min={df_result[col].min():.2f}, Avg={df_result[col].mean():.2f}"
+        
+        prompt = f"""You are a senior financial data analyst providing insights on UPI transaction data.
+
 Question: {question}
-SQL: {sql}
-Results:\n{data_text}\n
-Write a concise 3-5 sentence summary. Do not repeat raw data line-by-line."""
+SQL Query: {sql}
+
+Results:
+{data_text}{stats_context}
+
+Instructions:
+1. Write a comprehensive 4-6 sentence analysis in a professional, analyst tone
+2. Start with the key finding that directly answers the question
+3. Highlight the most significant patterns, trends, or outliers in the data
+4. Compare top performers vs bottom performers if applicable
+5. Provide business context or implications where relevant
+6. Use specific numbers and percentages from the data
+7. Write in present tense, as if presenting to stakeholders
+
+Analysis:"""
 
         try:
             resp = llm_client.call_model(prompt, use_fallback=use_fallback)
             text = resp["content"].strip()
-            return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        except Exception:
+            # Remove any thinking tags if present
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            # Remove any markdown formatting
+            text = text.replace("**", "").replace("##", "").strip()
+            return text
+        except Exception as e:
+            print(f"[SQL Analyst] Summary generation failed: {e}")
+            # Fallback to basic summary
             rows = len(df_result)
             cols = ", ".join(df_result.columns.tolist())
+            
+            # Try to create a basic insight from the data
+            if rows > 0 and len(num_cols) > 0:
+                col = num_cols[0]
+                cat_cols = df_result.select_dtypes(exclude="number").columns.tolist()
+                if len(cat_cols) > 0:
+                    top_row = df_result.iloc[0]
+                    return f"Analysis shows {rows} results. {top_row[cat_cols[0]]} leads with {top_row[col]:.2f}, followed by other entries. The data reveals significant variation across categories, with values ranging from {df_result[col].min():.2f} to {df_result[col].max():.2f}."
+            
             return f"The query returned {rows} row(s) with columns: {cols}."
 
     def analyze(self, query: str, chat_history: list = None) -> dict:
@@ -162,6 +373,7 @@ Write a concise 3-5 sentence summary. Do not repeat raw data line-by-line."""
             # Step 1: LLM for SQL
             resp = self._generate_sql(query, chat_history)
             sql = _clean_sql(resp["content"])
+            print(f"[SQL] {sql}")  # Log SQL to terminal only
             
             # Step 2: Query DB
             df_result = execute_sql(sql)
@@ -184,12 +396,16 @@ Write a concise 3-5 sentence summary. Do not repeat raw data line-by-line."""
                 stats.insert(0, {"label": f"MAX {col.upper()}", "value": f"{df_result[col].max():.2f}"})
 
             return {
+                "summary": summary,
                 "answer": summary,
                 "headline": "SQL Database Insight",
                 "stats": stats,
+                "result": result_str,
                 "data": result_str,
+                "sql": sql,
                 "code": sql,
                 "chart": chart,
+                "rows_returned": len(df_result),
                 "followups": generate_followup_questions(query),
                 "verification": {
                     "valid": True,

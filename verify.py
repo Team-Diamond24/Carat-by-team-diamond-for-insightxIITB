@@ -8,6 +8,9 @@ def verify_result(df_used: pd.DataFrame, plan: dict, result: Any) -> dict:
     warnings = []
     errors = []
 
+    if plan is None:
+        plan = {}
+
     # 1. DataFrame is not None and not empty -> error if so
     if result is None:
         errors.append("Result is None")

@@ -28,33 +28,34 @@ from typing import Any, Dict, Union
 
 def _handle_filter(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
     """
-    Filter rows where a column equals a given value.
+    Filter rows where a column matches a given value using the specified operator.
 
     Plan keys:
-        column (str): Column name to filter on.
-        value  (Any): The value to match for equality.
-
-    Returns:
-        pd.DataFrame containing only the matching rows.
-
-    Example plan:
-        {
-            "operation": "filter",
-            "column": "transaction_status",
-            "value": "SUCCESS"
-        }
+        column    (str): Column name to filter on.
+        value     (Any): The value to compare against.
+        filter_op (str): Comparison operator (==, !=, >, >=, <, <=). Default: ==
     """
     column = plan["column"]
     value = plan["value"]
+    op = plan.get("filter_op", "==")
 
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found in dataframe. "
                          f"Available columns: {list(df.columns)}")
 
-    result = df[df[column] == value]
+    _OP_FUNCS = {
+        "==": lambda s, v: s == v,
+        "!=": lambda s, v: s != v,
+        ">": lambda s, v: s > v,
+        ">=": lambda s, v: s >= v,
+        "<": lambda s, v: s < v,
+        "<=": lambda s, v: s <= v,
+    }
+    compare_fn = _OP_FUNCS.get(op, _OP_FUNCS["=="])
+    result = df[compare_fn(df[column], value)]
 
-    # Case-insensitive fallback for string values
-    if len(result) == 0 and isinstance(value, str):
+    # Case-insensitive fallback for string equality checks only
+    if len(result) == 0 and isinstance(value, str) and op == "==":
         result = df[df[column].astype(str).str.lower() == value.lower()]
 
     return result
@@ -65,32 +66,45 @@ def _handle_filter_multi(plan: Dict[str, Any], df: pd.DataFrame) -> pd.DataFrame
     Filter rows for multiple conditions using AND logic.
 
     Plan keys:
-        filters (list of dict): List of filter dictionaries with 'column' and 'value'.
+        filters (list of dict): List of filter dicts with 'column', 'value', and optional 'filter_op'.
     """
     filters = plan.get("filters", [])
     if not filters:
         return df
-        
+
+    _OP_FUNCS = {
+        "==": lambda s, v: s == v,
+        "!=": lambda s, v: s != v,
+        ">": lambda s, v: s > v,
+        ">=": lambda s, v: s >= v,
+        "<": lambda s, v: s < v,
+        "<=": lambda s, v: s <= v,
+    }
+
     mask = pd.Series(True, index=df.index)
     for f in filters:
         column = f["column"]
         value = f["value"]
+        op = f.get("filter_op", "==")
         if column not in df.columns:
             raise ValueError(f"Column '{column}' not found.")
-        mask &= (df[column] == value)
+        compare_fn = _OP_FUNCS.get(op, _OP_FUNCS["=="])
+        mask &= compare_fn(df[column], value)
         
     result = df[mask]
     
-    # Case insensitive fallback
+    # Case insensitive fallback (only for == operators)
     if len(result) == 0:
         mask_fallback = pd.Series(True, index=df.index)
         for f in filters:
              column = f["column"]
              value = f["value"]
-             if isinstance(value, str):
+             op = f.get("filter_op", "==")
+             if op == "==" and isinstance(value, str):
                   mask_fallback &= (df[column].astype(str).str.lower() == value.lower())
              else:
-                  mask_fallback &= (df[column] == value)
+                  compare_fn = _OP_FUNCS.get(op, _OP_FUNCS["=="])
+                  mask_fallback &= compare_fn(df[column], value)
         result = df[mask_fallback]
         
     return result

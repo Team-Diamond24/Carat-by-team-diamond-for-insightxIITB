@@ -13,6 +13,15 @@ _ALLOWED_AGG_FUNCS = {
     "median", "std", "var", "nunique", "first", "last", "size",
 }
 
+_OP_MAP = {
+    ast.Eq: "==",
+    ast.NotEq: "!=",
+    ast.Gt: ">",
+    ast.GtE: ">=",
+    ast.Lt: "<",
+    ast.LtE: "<=",
+}
+
 class PandasPlanVisitor(ast.NodeVisitor):
     def __init__(self):
         self.plan: Optional[Dict[str, Any]] = None
@@ -22,6 +31,14 @@ class PandasPlanVisitor(ast.NodeVisitor):
             return node.value
         elif isinstance(node, ast.List) or isinstance(node, ast.Tuple):
             return [self._extract_string_or_list(elt) for elt in node.elts if isinstance(elt, ast.Constant)]
+        return None
+
+    def _extract_constant(self, node: ast.AST):
+        """Extract a constant value (str, int, float) from an AST node."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
+            return -node.operand.value
         return None
 
     def visit_Assign(self, node: ast.Assign):
@@ -44,21 +61,21 @@ class PandasPlanVisitor(ast.NodeVisitor):
             self.generic_visit(node)
 
     def _handle_agg_func(self, node: ast.Call, agg_func: str):
-        # 1. df.groupby('col')['agg_col'].mean()
-        if isinstance(node.func.value, ast.Subscript):
+        # Case 1: df.groupby('col')['agg_col'].mean()
+        if isinstance(node.func.value, ast.Subscript) and isinstance(node.func.value.value, ast.Call):
             subscript = node.func.value
             if isinstance(subscript.value, ast.Call) and isinstance(subscript.value.func, ast.Attribute):
                 if subscript.value.func.attr == "groupby":
                     self._parse_groupby_bracket_agg(subscript, subscript.value, agg_func)
                     return
-        # 2. df['col'].mean()
+        # Case 2: df['col'].mean()
         elif isinstance(node.func.value, ast.Subscript):
              if isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == "df":
                   col = self._extract_string_or_list(node.func.value.slice)
                   if isinstance(col, str):
                        self.plan = {"op": agg_func, "column": col}
                        return
-        # 3. df.col.mean()
+        # Case 3: df.col.mean()
         elif isinstance(node.func.value, ast.Attribute):
              if getattr(node.func.value.value, "id", "") == "df":
                   col = node.func.value.attr
@@ -113,7 +130,6 @@ class PandasPlanVisitor(ast.NodeVisitor):
              # Could be df[df['col'] == val] or df[(df['col'] == val) & ...]
              filters = self._extract_filters(node.slice)
              if filters:
-                 # BUG 2 FIX: Only set self.plan if it's None
                  if self.plan is None:
                      if len(filters) == 1:
                          self.plan = dict(op="filter", **filters[0])
@@ -128,11 +144,14 @@ class PandasPlanVisitor(ast.NodeVisitor):
          
          def _walk(n):
               if isinstance(n, ast.Compare):
-                   if isinstance(n.ops[0], ast.Eq):
+                   op_type = type(n.ops[0])
+                   if op_type in _OP_MAP:
+                        operator = _OP_MAP[op_type]
                         if isinstance(n.left, ast.Subscript) and getattr(n.left.value, "id", "") == "df":
                              col = self._extract_string_or_list(n.left.slice)
-                             if isinstance(col, str) and isinstance(n.comparators[0], ast.Constant):
-                                  filters.append({"column": col, "value": n.comparators[0].value})
+                             val = self._extract_constant(n.comparators[0])
+                             if isinstance(col, str) and val is not None:
+                                  filters.append({"column": col, "value": val, "filter_op": operator})
               elif isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitAnd):
                    _walk(n.left)
                    _walk(n.right)
@@ -156,13 +175,14 @@ def code_to_plan(code: str) -> Dict[str, Any]:
         return visitor.plan
         
     raise ValueError(
-        f"Could not parse code into a supported plan.\\n"
-        f"Code: {code}\\n"
-        f"Supported AST patterns:\\n"
-        f"  - df.groupby('col')['agg_col'].func()\\n"
-        f"  - df.groupby('col').agg({{'col': 'func'}})\\n"
-        f"  - df['column'].func()\\n"
-        f"  - df[df['col'] == value]\\n"
-        f"  - df[(df['col1'] == v1) & (df['col2'] == v2)]\\n"
+        f"Could not parse code into a supported plan.\n"
+        f"Code: {code}\n"
+        f"Supported AST patterns:\n"
+        f"  - df.groupby('col')['agg_col'].func()\n"
+        f"  - df.groupby('col').agg({{'col': 'func'}})\n"
+        f"  - df['column'].func()\n"
+        f"  - df[df['col'] == value]\n"
+        f"  - df[df['col'] > value]  (supports ==, !=, >, >=, <, <=)\n"
+        f"  - df[(df['col1'] == v1) & (df['col2'] == v2)]\n"
         f"  - df['col'].value_counts()"
     )

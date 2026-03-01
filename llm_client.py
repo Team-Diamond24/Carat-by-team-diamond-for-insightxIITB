@@ -11,7 +11,7 @@ class LLMClient:
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=30.0)
         
         # Primary model, default to deepseek/deepseek-chat if not specified
-        self.primary_model = os.environ.get("PRIMARY_MODEL", "deepseek/deepseek-chat")
+        self.primary_model = os.environ.get("PRIMARY_MODEL", "deepseek/deepseek-r1")
         
         # Fallback model, if needed
         self.fallback_model = os.environ.get("FALLBACK_MODEL", "openai/gpt-3.5-turbo")
@@ -37,7 +37,18 @@ class LLMClient:
                 "fallback_used": use_fallback
             }
         except Exception as e:
+            error_str = str(e)
             print(f"[LLMClient] Error calling {model_to_use}: {e}")
-            raise e
+            
+            # If it's a 402 credit error and we haven't tried fallback yet, auto-retry with fallback
+            if "402" in error_str and not use_fallback:
+                print(f"[LLMClient] Auto-retrying with fallback model: {self.fallback_model}")
+                try:
+                    return self.call_model(prompt, use_fallback=True)
+                except Exception as fallback_error:
+                    print(f"[LLMClient] Fallback also failed: {fallback_error}")
+                    raise fallback_error
+            
+            rais
 
 llm_client = LLMClient()

@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Carat by Diamond | Analyst Terminal</title>
+    <meta name="description"
+        content="Carat Dashboard — Real-time insights, KPIs, and AI analysis of your UPI transaction data.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -264,13 +266,9 @@
         <header class="h-14 bg-surface border-b-2 border-accent flex items-center justify-between px-6 shrink-0 z-10">
             <h1 class="text-xs font-bold text-text-primary uppercase tracking-widest">Analysis Terminal</h1>
             <div class="flex items-center gap-4">
-                <div class="mode-toggle" id="mode-toggle">
-                    <button class="mode-btn active" data-mode="pandas" onclick="setMode('pandas')">Pandas</button>
-                    <button class="mode-btn" data-mode="sql" onclick="setMode('sql')">SQL</button>
-                </div>
                 <div class="flex items-center gap-2 border-2 border-accent bg-bg px-3 py-1">
                     <div class="w-1.5 h-1.5 bg-success rounded-full status-pulse"></div>
-                    <span class="text-xs font-bold text-success uppercase tracking-widest">Live</span>
+                    <span class="text-xs font-bold text-success uppercase tracking-widest">SQL Mode</span>
                 </div>
             </div>
         </header>
@@ -333,15 +331,12 @@
     <script>
         let chatHistory = [];
         let chartCounter = 0;
-        let currentMode = 'pandas'; // 'pandas' or 'sql'
 
-        function setMode(mode) {
-            currentMode = mode;
-            document.querySelectorAll('.mode-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
-            });
-            const input = document.getElementById('chat-input');
-            input.placeholder = mode === 'sql' ? 'ask in SQL mode...' : 'enter query...';
+        // Sanitize strings to prevent XSS when injecting into innerHTML
+        function sanitizeHTML(str) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(str || ''));
+            return div.innerHTML;
         }
 
         // Load real KPI stats
@@ -378,31 +373,39 @@
             div.innerHTML = `
                 <div class="flex items-center gap-3">
                     <div class="h-6 w-32 bg-accent/30 animate-pulse"></div>
-                    <span class="text-xs font-mono text-text-muted font-bold ml-auto" id="typing-timer">T+00:00:00</span>
+                    <span class="text-xs font-mono text-text-muted font-bold ml-auto" id="typing-timer">0s</span>
                 </div>
                 <div class="h-4 w-3/4 bg-accent/20 animate-pulse mt-2"></div>
                 <div class="h-4 w-1/2 bg-accent/20 animate-pulse"></div>
                 <div class="h-32 w-full bg-accent/10 animate-pulse mt-4"></div>
-                <div class="text-xs font-mono font-bold text-text-muted mt-2" id="typing-status">Analysing...</div>
+                <div class="flex items-center justify-between mt-2">
+                    <span class="text-xs font-mono font-bold text-text-muted" id="typing-status">Analysing...</span>
+                    <button id="stop-query-btn" onclick="stopCurrentQuery()" class="border-2 border-red-400 bg-red-50 text-red-600 text-xs font-bold font-mono px-3 py-1 uppercase tracking-widest hover:bg-red-100 transition-colors cursor-pointer">Stop</button>
+                </div>
             `;
             container.appendChild(div);
             scrollToBottom();
-            // Start timeout tracker
+            // Start elapsed timer
             window._queryStartTime = Date.now();
             window._queryTimer = setInterval(() => {
                 const elapsed = Math.round((Date.now() - window._queryStartTime) / 1000);
                 const timerLabel = document.getElementById('typing-timer');
                 if (timerLabel) {
-                    const now = new Date();
-                    timerLabel.textContent = "T+" + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":" + String(now.getSeconds()).padStart(2, "0");
+                    timerLabel.textContent = elapsed + 's';
                 }
                 const statusLabel = document.getElementById('typing-status');
                 if (statusLabel) {
-                    if (elapsed > 15) {
-                        statusLabel.textContent = "This query is taking longer than usual. Please try a simpler question.";
-                        statusLabel.classList.add("text-amber-500");
+                    if (elapsed > 60) {
+                        statusLabel.textContent = "Still working... (" + elapsed + "s) — click Stop if you'd like to cancel";
+                        statusLabel.className = "text-xs font-mono font-bold text-red-500";
+                    } else if (elapsed > 30) {
+                        statusLabel.textContent = "Taking a bit longer than usual... (" + elapsed + "s)";
+                        statusLabel.className = "text-xs font-mono font-bold text-amber-500";
+                    } else if (elapsed > 15) {
+                        statusLabel.textContent = "Generating SQL and querying database... (" + elapsed + "s)";
+                        statusLabel.className = "text-xs font-mono font-bold text-text-muted";
                     } else {
-                        statusLabel.textContent = "Analysing... " + elapsed + "s";
+                        statusLabel.textContent = "Analysing... (" + elapsed + "s)";
                     }
                 }
             }, 1000);
@@ -432,7 +435,7 @@
             ).join("");
 
             const chartHTML = data.chart
-                ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:260px;"></div>`
+                ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:340px;"></div>`
                 : "";
 
             // Build data display section for results without charts
@@ -469,7 +472,7 @@
                             <span class="text-xs font-mono text-amber-500/80 font-bold">${timestamp}</span>
                         </div>
                         <div class="text-amber-900 font-medium text-base mb-4 pb-4 border-b-2 border-amber-300">
-                            ${data.answer}
+                            ${sanitizeHTML(data.answer)}
                         </div>
                         <div class="pt-2">
                             <span class="text-xxs font-bold text-amber-500 uppercase tracking-widest block mb-3">Try one of these instead</span>
@@ -481,11 +484,11 @@
                 card.innerHTML = `
                     <div class="bg-surface border-t-4 border-accent p-6 shadow-[6px_6px_0px_0px_rgba(177,178,255,1)] flex flex-col sharp-corners border-x-2 border-b-2">
                         <div class="flex justify-between items-start mb-2">
-                            <h2 class="text-xl font-black text-text-primary uppercase tracking-tight">${data.headline || "ANALYSIS COMPLETE"}</h2>
+                            <h2 class="text-xl font-black text-text-primary uppercase tracking-tight">${sanitizeHTML(data.headline || "ANALYSIS COMPLETE")}</h2>
                             <span class="text-xs font-mono text-text-muted font-bold">${timestamp}</span>
                         </div>
                         <div class="text-text-secondary font-medium text-base mb-4 pb-4 border-b-2 border-accent/30">
-                            ${data.answer}
+                            ${sanitizeHTML(data.answer)}
                         </div>
                         ${chartHTML}
                         ${dataHTML}
@@ -542,12 +545,7 @@
             const now = new Date();
             const timestamp = "T+" + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":" + String(now.getSeconds()).padStart(2, "0");
 
-            const sqlHTML = data.sql
-                ? `<details open class="mt-2 mb-3">
-                    <summary class="text-xxs font-bold text-text-muted uppercase tracking-widest cursor-pointer mb-2">Generated SQL</summary>
-                    <div class="sql-block sharp-corners">${data.sql}</div>
-                   </details>`
-                : '';
+            const sqlHTML = '';  // SQL is logged to terminal only, not shown in UI
 
             const chartHTML = data.chart
                 ? `<div id="${chartId}" class="w-full mt-4 mb-2" style="height:260px;"></div>`
@@ -590,7 +588,7 @@
                     </div>
                     ${sqlHTML}
                     <div class="text-text-secondary font-medium text-base mb-2 pb-4 border-b-2 border-accent/30">
-                        ${data.summary || data.error || 'No summary available.'}
+                        ${sanitizeHTML(data.summary || data.error || 'No summary available.')}
                     </div>
                     ${chartHTML}
                     ${resultHTML}
@@ -629,6 +627,16 @@
             setTimeout(() => { if (banner.parentElement) banner.remove() }, 8000);
         }
 
+        // Global abort controller for current query
+        let currentAbortController = null;
+
+        function stopCurrentQuery() {
+            if (currentAbortController) {
+                currentAbortController.abort();
+                currentAbortController = null;
+            }
+        }
+
         async function submitQuery(question) {
             if (!question.trim()) return;
 
@@ -640,22 +648,19 @@
             addUserQuery(question);
             addTypingIndicator();
 
-            const endpoint = currentMode === 'sql' ? '/sql-ask' : '/ask';
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000);
+            currentAbortController = new AbortController();
 
             try {
-                const res = await fetch(endpoint, {
+                const res = await fetch('/ask', {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ question, history: chatHistory }),
-                    signal: controller.signal
+                    signal: currentAbortController.signal
                 });
-                clearTimeout(timeoutId);
                 const data = await res.json();
                 removeTypingIndicator();
+                currentAbortController = null;
 
-                // BUG 7 FIX: Handle error responses gracefully
                 if (data.error || data.clarification_required) {
                     showDismissibleError("I couldn't quite understand that. Try rephrasing — for example: 'Show total transactions by bank' or 'What is the failure rate by state?'");
                     input.disabled = false;
@@ -664,24 +669,23 @@
                     return;
                 }
 
-                if (currentMode === 'sql') {
+                // Use SQL card if SQL is available; otherwise use standard card
+                if (data.sql) {
                     addSqlResponseCard(data);
-                    chatHistory.push({ role: "user", content: question });
-                    chatHistory.push({ role: "assistant", content: data.summary || '' });
                 } else {
                     addResponseCard(data);
-                    chatHistory.push({ role: "user", content: question });
-                    chatHistory.push({ role: "assistant", content: data.answer || '' });
                 }
+                chatHistory.push({ role: "user", content: question });
+                chatHistory.push({ role: "assistant", content: data.summary || data.answer || '' });
                 if (chatHistory.length > 10) chatHistory = chatHistory.slice(-10);
 
             } catch (e) {
-                clearTimeout(timeoutId);
                 removeTypingIndicator();
-                const isTimeout = e.name === "AbortError";
+                currentAbortController = null;
+                const isCancelled = e.name === "AbortError";
 
-                showDismissibleError(isTimeout
-                    ? "Request timed out after 60 seconds. Server may be overloaded."
+                showDismissibleError(isCancelled
+                    ? "Query was stopped."
                     : "Connection error. Ensure the server is running."
                 );
             }

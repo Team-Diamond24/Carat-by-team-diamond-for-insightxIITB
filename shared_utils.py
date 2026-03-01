@@ -1,8 +1,9 @@
 import hashlib
 import re
+from collections import OrderedDict
 
-# --- Universal Result Cache ---
-FAST_CACHE = {}
+# --- Universal Result Cache (LRU) ---
+FAST_CACHE = OrderedDict()
 _CACHE_MAX = 200
 
 def canonicalize(question: str, chat_history=None):
@@ -18,16 +19,22 @@ def canonicalize(question: str, chat_history=None):
 
 
 def get_cached(question: str, chat_history=None):
-    """Return cached result or None."""
-    return FAST_CACHE.get(canonicalize(question, chat_history))
+    """Return cached result or None. Marks the entry as recently used (LRU)."""
+    key = canonicalize(question, chat_history)
+    if key in FAST_CACHE:
+        FAST_CACHE.move_to_end(key)  # Mark as recently used
+        return FAST_CACHE[key]
+    return None
 
 
 def set_cached(question: str, value: dict, chat_history=None):
-    """Store result in cache, evict oldest if full."""
-    if len(FAST_CACHE) >= _CACHE_MAX:
-        oldest = next(iter(FAST_CACHE))
-        del FAST_CACHE[oldest]
-    FAST_CACHE[canonicalize(question, chat_history)] = value
+    """Store result in cache, evict least-recently-used if full."""
+    key = canonicalize(question, chat_history)
+    if key in FAST_CACHE:
+        FAST_CACHE.move_to_end(key)
+    FAST_CACHE[key] = value
+    if len(FAST_CACHE) > _CACHE_MAX:
+        FAST_CACHE.popitem(last=False)  # Evict least recently used
 
 
 # --- Shared Question Validator ---

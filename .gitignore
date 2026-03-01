@@ -5,3 +5,16 @@ __pycache__/
 *.pem
 *.key
 secrets.json
+
+# Database
+carat.db
+
+# Large data files
+*.csv
+
+# Logs
+logs/
+*.jsonl
+
+# Obsolete migration scripts
+migrate_to_postgres.py
