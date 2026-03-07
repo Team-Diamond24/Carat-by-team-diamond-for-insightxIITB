@@ -19,22 +19,41 @@ def canonicalize(question: str, chat_history=None):
 
 
 def get_cached(question: str, chat_history=None):
-    """Return cached result or None. Marks the entry as recently used (LRU)."""
-    key = canonicalize(question, chat_history)
-    if key in FAST_CACHE:
-        FAST_CACHE.move_to_end(key)  # Mark as recently used
-        return FAST_CACHE[key]
+    """Return cached result or None. Checks question-only key first, then history-aware key."""
+    # Always check the question-only key first (catches repeat questions regardless of history)
+    base_key = canonicalize(question, None)
+    if base_key in FAST_CACHE:
+        FAST_CACHE.move_to_end(base_key)
+        return FAST_CACHE[base_key]
+
+    # Then check history-specific key
+    if chat_history:
+        full_key = canonicalize(question, chat_history)
+        if full_key in FAST_CACHE:
+            FAST_CACHE.move_to_end(full_key)
+            return FAST_CACHE[full_key]
+
     return None
 
 
 def set_cached(question: str, value: dict, chat_history=None):
-    """Store result in cache, evict least-recently-used if full."""
-    key = canonicalize(question, chat_history)
-    if key in FAST_CACHE:
-        FAST_CACHE.move_to_end(key)
-    FAST_CACHE[key] = value
+    """Store result in cache under the question-only key (always) and history key (if applicable)."""
+    # Always store under question-only key so repeat questions always hit
+    base_key = canonicalize(question, None)
+    if base_key in FAST_CACHE:
+        FAST_CACHE.move_to_end(base_key)
+    FAST_CACHE[base_key] = value
     if len(FAST_CACHE) > _CACHE_MAX:
-        FAST_CACHE.popitem(last=False)  # Evict least recently used
+        FAST_CACHE.popitem(last=False)
+
+    # Also store under history-specific key for context-aware lookups
+    if chat_history:
+        full_key = canonicalize(question, chat_history)
+        if full_key in FAST_CACHE:
+            FAST_CACHE.move_to_end(full_key)
+        FAST_CACHE[full_key] = value
+        if len(FAST_CACHE) > _CACHE_MAX:
+            FAST_CACHE.popitem(last=False)  # Evict least recently used
 
 
 # --- Shared Question Validator ---
