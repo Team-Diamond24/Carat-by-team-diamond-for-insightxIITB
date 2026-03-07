@@ -122,6 +122,11 @@ def stats():
 
 if __name__ == "__main__":
     print("Carat by Team Diamond starting...")
+
+    # Pre-cache quick query responses for instant results
+    from warmup_cache import warmup_cache
+    warmup_cache()
+
     print("Landing page: http://localhost:5050")
     print("Dashboard:    http://localhost:5050/dashboard")
     app.run(port=5050)

@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.utils
 
 from llm_client import llm_client
-from shared_utils import BaseAnalyst, validate_question, format_clarification_response, generate_followup_questions
+from shared_utils import BaseAnalyst, validate_question, format_clarification_response, generate_followup_questions, get_cached, set_cached
 
 # NOTE: `from db import get_connection` is imported lazily inside
 # execute_sql() to avoid a hard dependency on sqlite3 at import time.
@@ -367,6 +367,18 @@ Analysis:"""
         if not is_valid:
             return format_clarification_response(err_msg)
 
+        # Fast-path: check pre-saved queries (keyword matching, no LLM)
+        from warmup_cache import match_presaved_query
+        presaved = match_presaved_query(query)
+        if presaved:
+            return presaved
+
+        # Check LRU cache (repeat questions)
+        cached = get_cached(query, chat_history)
+        if cached:
+            print(f"[SQL Analyst] Cache hit for: {query}")
+            return cached
+
         try:
             # Step 1: LLM for SQL
             resp = self._generate_sql(query, chat_history)
@@ -393,7 +405,7 @@ Analysis:"""
                 col = df_result.select_dtypes(include="number").columns[0]
                 stats.insert(0, {"label": f"MAX {col.upper()}", "value": f"{df_result[col].max():.2f}"})
 
-            return {
+            response = {
                 "summary": summary,
                 "answer": summary,
                 "headline": "SQL Database Insight",
@@ -413,6 +425,10 @@ Analysis:"""
                     "fallback_used": resp["fallback_used"]
                 }
             }
+
+            # Cache the response for future re-use
+            set_cached(query, response, chat_history)
+            return response
 
         except ValueError as ve:
             print(f"[SQL Analyst] Validation/Execution Failed: {ve}")
