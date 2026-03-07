@@ -147,14 +147,12 @@ def generate_sql_chart(df_result: pd.DataFrame, question: str):
         if chart_type == "pie":
             cat_col = cat_cols[0]
             val_col = num_cols[0]
-            # Sort by value descending for consistent legend order
             df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
             
-            # Use column names with the dataframe
             fig = px.pie(
                 df, 
-                names=cat_col,  # Column name
-                values=val_col,  # Column name
+                names=cat_col, 
+                values=val_col, 
                 title=question.capitalize(),
                 color_discrete_sequence=COLORS,
                 hole=0.35
@@ -169,74 +167,75 @@ def generate_sql_chart(df_result: pd.DataFrame, question: str):
         elif chart_type == "bar":
             cat_col = cat_cols[0]
             val_col = num_cols[0]
-            # Sort descending - highest first
             df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
             
-            # Use column names with the dataframe
             fig = px.bar(
                 df, 
-                x=cat_col,  # Column name
-                y=val_col,  # Column name
+                x=cat_col, 
+                y=val_col, 
                 title=question.capitalize(),
                 color_discrete_sequence=["#818cf8"],
                 labels={cat_col: _humanize_col(cat_col), val_col: _humanize_col(val_col)},
-                text=val_col,  # Column name for text
-                category_orders={cat_col: df[cat_col].tolist()}  # Lock the sort order
+                text=val_col,
+                category_orders={cat_col: df[cat_col].tolist()}
             )
             
-            # Format text based on data type
+            # --- FIX: Add headroom for labels ---
+            max_val = df[val_col].max()
+            y_range = [0, max_val * 1.15] if max_val > 0 else None
+            
             if is_percentage:
-                fig.update_traces(texttemplate='%{y:.2f}%', textposition="outside", textfont_size=10)
+                fig.update_traces(texttemplate='%{y:.2f}%', textposition="outside", textfont_size=10, cliponaxis=False)
                 fig.update_layout(
-                    yaxis=dict(title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(range=y_range, title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
                     xaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
                 )
             else:
-                fig.update_traces(texttemplate='%{y:,.0f}', textposition="outside", textfont_size=10)
+                fig.update_traces(texttemplate='%{y:,.0f}', textposition="outside", textfont_size=10, cliponaxis=False)
                 fig.update_layout(
-                    yaxis=dict(title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    yaxis=dict(range=y_range, title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
                     xaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
                 )
 
         elif chart_type == "hbar":
             cat_col = cat_cols[0]
             val_col = num_cols[0]
-            # Sort descending first, then reverse for display (highest at top)
             df = df.sort_values(val_col, ascending=False).reset_index(drop=True)
-            df = df.iloc[::-1].reset_index(drop=True)  # Reverse for top-to-bottom
+            df = df.iloc[::-1].reset_index(drop=True)
             
-            # Use column names with the dataframe
             fig = px.bar(
                 df, 
-                x=val_col,  # Column name
-                y=cat_col,  # Column name
+                x=val_col, 
+                y=cat_col, 
                 title=question.capitalize(),
                 orientation="h",
                 color_discrete_sequence=["#818cf8"],
                 labels={val_col: _humanize_col(val_col), cat_col: _humanize_col(cat_col)},
-                text=val_col  # Column name for text
+                text=val_col
             )
             
-            # Format text based on data type
+            # --- FIX: Add headroom for labels ---
+            max_val = df[val_col].max()
+            x_range = [0, max_val * 1.15] if max_val > 0 else None
+            
             if is_percentage:
-                fig.update_traces(texttemplate='%{x:.2f}%', textposition="outside", textfont_size=10)
+                fig.update_traces(texttemplate='%{x:.2f}%', textposition="outside", textfont_size=10, cliponaxis=False)
                 fig.update_layout(
-                    xaxis=dict(title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(range=x_range, title=_humanize_col(val_col), tickformat=".1f", ticksuffix="%", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
                     yaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
                 )
             else:
-                fig.update_traces(texttemplate='%{x:,.0f}', textposition="outside", textfont_size=10)
+                fig.update_traces(texttemplate='%{x:,.0f}', textposition="outside", textfont_size=10, cliponaxis=False)
                 fig.update_layout(
-                    xaxis=dict(title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
+                    xaxis=dict(range=x_range, title=_humanize_col(val_col), tickformat=",", showgrid=True, gridcolor="rgba(129,140,248,0.15)"),
                     yaxis=dict(title=_humanize_col(cat_col), showgrid=False, categoryorder='array', categoryarray=df[cat_col].tolist())
                 )
 
         elif chart_type == "scatter":
-            # Use column names with the dataframe
             fig = px.scatter(
                 df, 
-                x=num_cols[0],  # Column name
-                y=num_cols[1],  # Column name
+                x=num_cols[0], 
+                y=num_cols[1], 
                 title=question.capitalize(),
                 color_discrete_sequence=["#818cf8"],
                 labels={num_cols[0]: _humanize_col(num_cols[0]), num_cols[1]: _humanize_col(num_cols[1])},
@@ -247,10 +246,9 @@ def generate_sql_chart(df_result: pd.DataFrame, question: str):
             )
 
         elif chart_type == "histogram":
-            # Use column name with the dataframe
             fig = px.histogram(
                 df, 
-                x=num_cols[0],  # Column name
+                x=num_cols[0], 
                 title=question.capitalize(),
                 color_discrete_sequence=["#818cf8"],
                 labels={num_cols[0]: _humanize_col(num_cols[0])},
